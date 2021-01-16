@@ -1,0 +1,28 @@
+int stride;
+unsigned char *data;
+cairo_surface_t *surface;
+
+stride = cairo_format_stride_for_width (format, width);
+data = malloc (stride * height);
+surface = cairo_image_surface_create_for_data (data, format,
+					  width, height,
+					  stride);
+
+cairo_surface_t *
+cairo_image_surface_create_for_data (unsigned char *data,
+                                     cairo_format_t format,
+                                     int width,
+                                     int height,
+                                     int stride);
+
+CAIRO_FORMAT_RGB24
+each pixel is a 32-bit quantity, with the upper 8 bits unused. Red, Green, and Blue are stored in the remaining 24 bits in that order. (Since 1.0)
+
+CAIRO_FORMAT_ARGB32
+each pixel is a 32-bit quantity, with alpha in the upper 8 bits, then red, then green, then blue. The 32-bit quantities are stored native-endian. Pre-multiplied alpha is used. (That is, 50% transparent red is 0x80800000, not 0x80ff0000.) (Since 1.0)
+
+
+unsigned char *     cairo_image_surface_get_data        (cairo_surface_t *surface);
+get pointer to imag data for inspection _and_ manipulation
+
+

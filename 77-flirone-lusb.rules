@@ -1,0 +1,3 @@
+
+LABEL="flirone-libusb"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="09cb", ATTRS{idProduct}=="1996", MODE="0666"
