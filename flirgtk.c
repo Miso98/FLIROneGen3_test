@@ -36,12 +36,16 @@ static cairo_surface_t *surface = NULL;
 
 // internal frame buffer with 640x480 pixels of 4 byte each,
 // first byte unused, R, G, B 0x00RRGGBB
-unsigned char fbuffer[640*480*4];
+unsigned char fbuffer[640*500*4];
 unsigned char *fbdata;
 unsigned char *color_palette;
 gboolean flir_run = FALSE;
 
 gpointer cam_thread_main(gpointer user_data);
+
+extern double t_min, t_max, t_center;
+
+void draw_palette(void);
 
 
 static gboolean
@@ -56,16 +60,16 @@ int stride;
 		cairo_surface_destroy (surface);
 
 	gtk_widget_get_allocation (widget, &allocation);
+	// g_printerr("configure event %d x %d\n", allocation.width, allocation.height);
 	stride = cairo_format_stride_for_width (CAIRO_FORMAT_RGB24, 640);
 	// g_printerr("stride %d\n", stride);
 	surface = cairo_image_surface_create_for_data (fbuffer,
                                      CAIRO_FORMAT_RGB24,
                                      640,
-                                     480,
+                                     500,
                                      stride);
 	fbdata = cairo_image_surface_get_data(surface);
-
-	g_printerr("configure event %d x %d\n", allocation.width, allocation.height);
+	draw_palette();
 
 	/* We've handled the configure event, no need for further processing. */
 	return TRUE;
@@ -85,24 +89,46 @@ draw_event (GtkWidget *widget,
 	return FALSE;
 }
 
+#include "font5x7.h" 
+void font_write(unsigned char *fb, int x, int y, const char *string)
+{
+int rx, ry, v;
+
+	while (*string) {
+		for (ry = 0; ry < 5; ++ry) {
+			for (rx = 0; rx < 7; ++rx) {
+				v = (font5x7_basic[((*string) & 0x7F) - CHAR_OFFSET][ry] >> (rx)) & 1;
+				// fb[(y+ry) * 160 + (x + rx)] = v ? 0 : 0xFF; // black / white
+				fb[((y+rx)*4) * 640 + (x + ry)*4] = v ? 0xff : 0x00; // black / white
+				fb[((y+rx)*4) * 640 + (x + ry)*4 +1] = v ? 0xff : 0x00; // black / white
+				fb[((y+rx)*4) * 640 + (x + ry)*4 +2] = v ? 0xff : 0x00; // black / white
+				// fb[(y+rx) * 160 + (x + ry)] = v ? 0 : fb[(y+rx) * 160 + (x + ry)];  // transparent
+			}
+		}
+		string++;
+		x += 6;
+	}
+}
+
 void
 update_fb(void)
 {
-#if 0
-unsigned int x,y;
-unsigned int *pdata;
-static unsigned char cnt=0;
+char tstr[16];
 
-	cnt+=0x0f;
-	// g_printerr("cnt=%d\n", cnt);
-	for (y=0; y<480; y++) {
-		for (x=0; x<640; x++) {
-			pdata = (unsigned int *)&fbdata[(y*640*4)+(x*4)];
-			*pdata = (cnt << 16) | (x << 9) | y;
-		}
-	}
-#endif
+	// g_printerr("min %.1f center %.1f max %.1f\r", t_min, t_center, t_max);
+
+	snprintf(tstr, 16, "%.1f", t_min);
+	font_write(fbdata, 140, 486, tstr);
+	snprintf(tstr, 16, "%.1f", t_max);
+	font_write(fbdata, 440, 486, tstr);
 	gtk_widget_queue_draw(image_darea);
+}
+
+void
+store_shot_clicked(GtkWidget *button, gpointer user_data)
+{
+
+	cairo_surface_write_to_png (surface, "shot.png");
 }
 
 void
@@ -134,6 +160,28 @@ handle_timeout (gpointer user_data)
 	return TRUE;
 }
 
+// 256 colors (8bit), two hor pixel per color
+// piture width = 640, center scale, i.e. start at 64
+void
+draw_palette(void)
+{
+unsigned int *p1, *pc;
+int x,y;
+
+	y=481; // leave one line blank/black
+	for (x=0; x<256; x++) {
+		fbdata[4*y * 640 + (x+174)*4] = color_palette[3 * x + 2];  // B
+		fbdata[(4*y * 640 + (x+174)*4)+1] = color_palette[3 * x + 1]; // G
+		fbdata[(4*y * 640 + (x+174)*4)+2] = color_palette[3 * x]; // R
+	}
+	y=481;
+	p1 = (unsigned int *)&fbdata[4*y * 640]; // pointer to start of line
+	for (y=482; y<500; y++) {
+		pc = (unsigned int *)&fbdata[4*y * 640]; // pointer to start of copy line
+		memcpy(pc,p1,640*4);
+	}
+}
+
 void
 palette_changed (GtkComboBox *widget, gpointer user_data)
 {
@@ -153,6 +201,7 @@ int act;
 		if (act == 7) color_palette = palette_Iron2;
 		if (act == 8) color_palette = palette_Iron_Black;
 		if (act == 9) color_palette = palette_Rainbow;
+		draw_palette();
 	};
 }
 
@@ -164,6 +213,9 @@ GtkWidget *box;
 GtkWidget *hbox;
 GtkWidget *w;
 // GtkWidget *da;
+
+	// default color palette
+	color_palette = palette_Rainbow;
 
 	if (!window) {
 		window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
@@ -178,13 +230,19 @@ GtkWidget *w;
 		hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
 		gtk_container_add (GTK_CONTAINER (box), hbox);
 
-		w = gtk_button_new_with_label("Start");
+		// 48 GTK_ICON_SIZE_DIALOG
+		// 32 GTK_ICON_SIZE_DND
+		// media-playback-start
+		// w = gtk_button_new_with_label("Start");
+		w = gtk_button_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
 		gtk_container_add (GTK_CONTAINER (hbox), w);
 
 		g_signal_connect (w, "clicked",
 			G_CALLBACK (start_clicked), NULL);
 
-		w = gtk_button_new_with_label("Stop");
+		// media-playback-stop
+		// w = gtk_button_new_with_label("Stop");
+		w = gtk_button_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
 		gtk_container_add (GTK_CONTAINER (hbox), w);
 
 		g_signal_connect (w, "clicked",
@@ -204,13 +262,12 @@ GtkWidget *w;
 		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Rainbow");
 		gtk_combo_box_set_active (GTK_COMBO_BOX(w), 9);
 		gtk_container_add (GTK_CONTAINER (hbox), w);
-		color_palette = palette_Rainbow;
 		g_signal_connect (w, "changed",
 			G_CALLBACK (palette_changed), NULL);
 
 		image_darea = gtk_drawing_area_new ();
 		/* set a minimum size */
-		gtk_widget_set_size_request (image_darea, 640, 480);
+		gtk_widget_set_size_request (image_darea, 640, 500);
 
 		gtk_container_add (GTK_CONTAINER (box), image_darea);
 
@@ -218,6 +275,14 @@ GtkWidget *w;
 			G_CALLBACK (draw_event), NULL);
 		g_signal_connect (image_darea,"configure-event",
 			G_CALLBACK (configure_event), NULL);
+
+		// camera-photo
+		// w = gtk_button_new_with_label("Shot");
+		w = gtk_button_new_from_icon_name("camera-photo", GTK_ICON_SIZE_DND);
+		gtk_container_add (GTK_CONTAINER (box), w);
+
+		g_signal_connect (w, "clicked",
+			G_CALLBACK (store_shot_clicked), NULL);
 
 		// g_timeout_add_seconds(1, handle_timeout, NULL);
 

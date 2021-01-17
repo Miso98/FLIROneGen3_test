@@ -26,3 +26,62 @@ unsigned char *     cairo_image_surface_get_data        (cairo_surface_t *surfac
 get pointer to imag data for inspection _and_ manipulation
 
 
+
+
+first disable Auto FFC (autoFFC:false)
+Code: [Select]
+
+            //--------- write string: {"type":"setOption","data":{"option":"autoFFC","value":false}}
+            length = 16;
+            unsigned char my_string4[16]={0xcc,0x01,0x00,0x00,0x01,0x00,0x00,0x00,0x3f,0x00,0x00,0x00,0x57,0x64,0x17,0x8b};
+            printf("\nEP 0x02 to be sent Hexcode: %i Bytes[",length);
+            for (i = 0; i < length; i++) {
+                printf(" %02x", my_string4[i]);
+
+            }
+            printf(" ]\n");
+
+            r = libusb_bulk_transfer(devh, 2, my_string4, length, &transferred, 0);
+            if(r == 0 && transferred == length)
+            {
+                printf("\nWrite successful!");
+            }
+            else
+                printf("\nError in write! res = %d and transferred = %d\n", r, transferred);
+
+            strcpy(  my_string,"{\"type\":\"setOption\",\"data\":{\"option\":\"autoFFC\",\"value\":false}}");
+            length = strlen(my_string)+1;
+            printf("\nEP 0x02 to be sent %i Bytes: %s", length, my_string);
+
+            // avoid error: invalid conversion from ‘char*’ to ‘unsigned char*’ [-fpermissive]
+            my_string1 = (unsigned char*)my_string;
+
+            r = libusb_bulk_transfer(devh, 2, my_string1, length, &transferred, 0);
+            if(r == 0 && transferred == length)
+            {
+                printf("\nWrite successful!");
+                printf("\nSent %d bytes with string: %s\n", transferred, my_string);
+            }
+            else
+                printf("\nError in write! res = %d and transferred = %d\n", r, transferred);
+
+
+and trigger if required a manual FCC (doFFC:true)
+Code: [Select]
+
+                unsigned char my_string2[16]={0xcc,0x01,0x00,0x00,0x01,0x00,0x00,0x00,0x3c,0x00,0x00,0x00,0xb9,0xcb,0xa2,0x99};
+
+                r = libusb_bulk_transfer(devh, 2, my_string2, length, &transferred, 0);
+                if(r == 0 && transferred == length)
+                    printf("\nWrite successful!");
+                else
+                    printf("\nError in write! res = %d and transferred = %d\n", r, transferred);
+
+                char my_string[128];
+                transferred = 0;
+
+                strcpy(my_string, "{\"type\":\"setOption\",\"data\":{\"option\":\"doFFC\",\"value\":true}}");
+                length = strlen(my_string)+1;
+
+                unsigned char *my_string1 = (unsigned char*)my_string;
+

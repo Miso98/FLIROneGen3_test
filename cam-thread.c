@@ -34,6 +34,9 @@ extern unsigned char *color_palette;
 #include <stdlib.h>
 #include <libusb.h>
 #include <time.h>
+#include <sys/ioctl.h>
+#include <fcntl.h>
+#include <assert.h>
  
 #include <fcntl.h>
 #include <math.h>
@@ -46,60 +49,6 @@ extern unsigned char *color_palette;
 
 // #include "jpeglib.h"
 
-
-// -- define v4l2 ---------------
-// #include <linux/videodev2.h>
-#include <sys/ioctl.h>
-#include <string.h>
-#include <fcntl.h>
-#include <assert.h>
-
-#if 0
-#define VIDEO_DEVICE0 "/dev/video1"  // gray scale thermal image
-#define FRAME_WIDTH0  160
-#define FRAME_HEIGHT0 120
-
-#define VIDEO_DEVICE1 "/dev/video2" // color visible image
-#define FRAME_WIDTH1  640
-#define FRAME_HEIGHT1 480
-
-#define VIDEO_DEVICE2 "/dev/video3" // colorized thermal image
-#define FRAME_WIDTH2  160
-#define FRAME_HEIGHT2 128
-
-#define FRAME_FORMAT0 V4L2_PIX_FMT_GREY
-#define FRAME_FORMAT1 V4L2_PIX_FMT_MJPEG
-#define FRAME_FORMAT2 V4L2_PIX_FMT_RGB24
-
-struct v4l2_capability vid_caps0;
-struct v4l2_capability vid_caps1;
-struct v4l2_capability vid_caps2;
-
-struct v4l2_format vid_format0;
-struct v4l2_format vid_format1;
-struct v4l2_format vid_format2;
-
-size_t framesize0;
-size_t linewidth0;
-
-size_t framesize1;
-size_t linewidth1;
-
-size_t framesize2;
-size_t linewidth2;
-
-     
-const char *video_device0=VIDEO_DEVICE0;
-const char *video_device1=VIDEO_DEVICE1;
-const char *video_device2=VIDEO_DEVICE2;
-
-int fdwr0 = 0;
-int fdwr1 = 0;
-int fdwr2 = 0;
-
-// -- end define v4l2 ---------------
-#endif
-
 #define VENDOR_ID 0x09cb
 #define PRODUCT_ID 0x1996
 
@@ -107,7 +56,12 @@ static struct libusb_device_handle *devh = NULL;
 int filecount=0;
 struct timeval t1, t2;
 long long fps_t;
- 
+
+double t_min = 0.0;
+double t_max = 0.0;
+double t_center = 0.0;
+
+
 int FFC =   0; // detect FFC
 
 // -- buffer for EP 0x85 chunks ---------------
@@ -210,7 +164,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 
 	// Make a unsigned short array from what comes from the thermal frame
 	// find the max, min and RMS (not used yet) values of the array
-	int maxx, maxy;
+	//int maxx, maxy;
 	for (y = 0; y < 120; ++y) {
 		for (x = 0; x < 160; ++x) {
 			if (x<80) 
@@ -222,7 +176,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			if (v < min)
 				min = v;
 			if (v > max) {
-				max = v; maxx = x; maxy = y;
+				max = v; //maxx = x; maxy = y;
 			}
 			rms += v * v;      
 		}
@@ -247,39 +201,43 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 		}
 	}
   
-	char st1[100];
-	char st2[100];
-	struct tm *loctime;
+	//char st1[100];
+	//char st2[100];
+	//struct tm *loctime;
 	// Convert it to local time and Print it out in a nice format.
-	loctime = localtime (&now1);
-	strftime (st1, 60, "%H:%M:%S", loctime);
-   
+	//loctime = localtime (&now1);
+	//strftime (st1, 60, "%H:%M:%S", loctime);
+
 	// calc medium of 2x2 center pixels
 	int med = (pix[59 * 160 + 79]+pix[59 * 160 + 80]+pix[60 * 160 + 79]+pix[60 * 160 + 80])/4;
-	sprintf(st2," %.1f/%.1f/%.1f'C", raw2temperature(min),raw2temperature(med),raw2temperature(max));
-	strcat(st1, st2);
 
-	#define MAXC 26 // max chars in line  160/6=26,6 
-	strncpy(st2, st1, MAXC);
+	t_min = raw2temperature(min);
+	t_max = raw2temperature(max);
+	t_center = raw2temperature(med);
+	// sprintf(st2," %.1f/%.1f/%.1f'C", raw2temperature(min), raw2temperature(med), raw2temperature(max));
+	//strcat(st1, st2);
+
+	//#define MAXC 26 // max chars in line  160/6=26,6 
+	//strncpy(st2, st1, MAXC);
 	// write zero to string !! 
-	st2[MAXC-1] = '\0';
-	fprintf(stderr,"%s\r",st2);
+	//st2[MAXC-1] = '\0';
+	//fprintf(stderr,"%s\r",st2);
 	// font_write(fb_proc, 1, 120, st2);
 
 	// show crosshairs, remove if required 
 	// font_write(fb_proc, 80-2, 60-3, "+");
 
-	maxx -= 4;
-	maxy -= 4;
+	//maxx -= 4;
+	//maxy -= 4;
 
-	if (maxx < 0)
-		maxx = 0; 
-	if (maxy < 0)
-		maxy = 0;
-	if (maxx > 150)
-		maxx = 150;
-	if (maxy > 110)
-		maxy = 110;
+	//if (maxx < 0)
+	//	maxx = 0; 
+	//if (maxy < 0)
+	//	maxy = 0;
+	//if (maxx > 150)
+	//	maxx = 150;
+	//if (maxy > 110)
+	//	maxy = 110;
 
 	// font_write(fb_proc, 160-6, maxy, "<");
 	// font_write(fb_proc, maxx, 120-8, "|");
@@ -304,7 +262,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			fbdata[16*y * 640 + x*16] = color_palette[3 * v + 2];  // B
 			fbdata[(16*y * 640 + x*16)+1] = color_palette[3 * v + 1]; // G
 			fbdata[(16*y * 640 + x*16)+2] = color_palette[3 * v]; // R
-			fbdata[(16*y * 640 + x*16)+3] = 0x00; // empty
+			// fbdata[(16*y * 640 + x*16)+3] = 0x00; // empty
 
 			// copy whole 32bit words hor/vert
 			p1 = (unsigned int *)&fbdata[16*y * 640 + x*16];
