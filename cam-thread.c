@@ -69,6 +69,8 @@ int FFC =   0; // detect FFC
 int buf85pointer = 0;
 unsigned char buf85[BUF85SIZE];
 
+extern unsigned char *jpeg_buffer;
+extern unsigned int jpeg_size;
 
 
 double
@@ -88,6 +90,7 @@ raw2temperature(unsigned short RAW)
 
 void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char buf[], unsigned char *colormap) 
 {
+	static int fcnt=0;
 	// error handler
 	time_t now1;
 	now1 = time(NULL); 
@@ -262,7 +265,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			fbdata[16*y * 640 + x*16] = color_palette[3 * v + 2];  // B
 			fbdata[(16*y * 640 + x*16)+1] = color_palette[3 * v + 1]; // G
 			fbdata[(16*y * 640 + x*16)+2] = color_palette[3 * v]; // R
-			// fbdata[(16*y * 640 + x*16)+3] = 0x00; // empty
+			// fbdata[(16*y * 640 + x*16)+3] = 0x7f; // empty
 
 			// copy whole 32bit words hor/vert
 			p1 = (unsigned int *)&fbdata[16*y * 640 + x*16];
@@ -308,6 +311,26 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	// write video to v4l2loopback(s)
 	//   write(fdwr0, fb_proc, framesize0);  // gray scale Thermal Image
 	//write(fdwr1, &buf85[28+ThermalSize], JpgSize);  // jpg Visual Image
+#if 0
+	fprintf(stderr, "jpgsize %d\n", JpgSize);
+	{
+		char fname[64];
+		int fdf;
+		
+		snprintf(fname, 64, "frame-%04d.jpg", fcnt++);
+		fdf=open(fname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+		write (fdf, &buf85[28+ThermalSize], JpgSize);
+		close(fdf);
+	}
+#endif
+	if (jpeg_size == 0 && JpgSize > 0) {
+		//unsigned char bla[BUF85SIZE];
+
+		jpeg_size=JpgSize;
+		jpeg_buffer=(unsigned char *)malloc(jpeg_size);
+		// fprintf(stderr, "jpgsize %d %d\n", JpgSize, jpeg_size);
+		memcpy(jpeg_buffer, &buf85[28+ThermalSize], jpeg_size);
+	}
  
 	if (strncmp ((char *)&buf85[28+ThermalSize+JpgSize+17],"FFC",3)==0) {
 		FFC=1;  // drop all FFC frames

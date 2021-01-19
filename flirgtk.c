@@ -19,6 +19,13 @@
 
 #include <gtk/gtk.h>
 
+#include <sys/types.h>
+       #include <sys/stat.h>
+       #include <fcntl.h>
+
+
+#include "cairo_jpg/src/cairo_jpg.h"
+
 #include "palettes/15.h"
 #include "palettes/17.h"
 #include "palettes/7.h"
@@ -44,6 +51,10 @@ gboolean flir_run = FALSE;
 gpointer cam_thread_main(gpointer user_data);
 
 extern double t_min, t_max, t_center;
+#define BUF85SIZE 1048576
+unsigned char *jpeg_buffer;
+unsigned int jpeg_size=0;
+
 
 void draw_palette(void);
 
@@ -61,7 +72,7 @@ int stride;
 
 	gtk_widget_get_allocation (widget, &allocation);
 	// g_printerr("configure event %d x %d\n", allocation.width, allocation.height);
-	stride = cairo_format_stride_for_width (CAIRO_FORMAT_RGB24, 640);
+	stride = cairo_format_stride_for_width (CAIRO_FORMAT_ARGB32, 640);
 	// g_printerr("stride %d\n", stride);
 	surface = cairo_image_surface_create_for_data (fbuffer,
                                      CAIRO_FORMAT_RGB24,
@@ -81,53 +92,92 @@ draw_event (GtkWidget *widget,
                cairo_t   *cr,
                gpointer   data)
 {
+char tdisp[16];
+cairo_surface_t *jpeg_surface;
+static int fcnt=0;
+
 	// g_printerr("draw event\n");
 
+	// first draw the frame buffer containing the IR frame
+#if 1
+	if (jpeg_size != 0) {
+		// g_printerr(" draw event %d\n", jpeg_size);
+		jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
+//		cairo_scale (cr, (1./2.25), (1./2.25));
+		cairo_set_source_surface (cr, jpeg_surface, 0, 0);
+		cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
+		cairo_paint (cr);
+		cairo_surface_destroy (jpeg_surface);
+		jpeg_size=0;
+	}
+#endif
 	cairo_set_source_surface (cr, surface, 0, 0);
+	cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
 	cairo_paint (cr);
 
+#if 1
+	// then draw decoration
+//	cairo_scale (cr, 1, 1);
+
+	// crosshair in the center
+	cairo_set_line_width (cr, 3);
+	cairo_set_source_rgb (cr, 0, 0, 0);
+	cairo_move_to(cr, 320, 200);
+	cairo_line_to(cr, 320, 280);
+	cairo_stroke (cr);
+	cairo_move_to(cr, 280, 240);
+	cairo_line_to(cr, 360, 240);
+	cairo_stroke (cr);
+	cairo_set_line_width (cr, 1);
+	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+	cairo_move_to(cr, 320, 200);
+	cairo_line_to(cr, 320, 280);
+	cairo_stroke (cr);
+	cairo_move_to(cr, 280, 240);
+	cairo_line_to(cr, 360, 240);
+	cairo_stroke (cr);
+
+	// print center temperature near crosshair
+	snprintf(tdisp, 16, "%.1f°C", t_center);
+	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+	cairo_select_font_face (cr, "Sans",
+		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, 24);
+	// cairo_text_extents (cr, "a", &te);
+	cairo_move_to (cr, 330, 220);
+	cairo_show_text (cr, tdisp);
+
+	// update palette scale temperature range
+	snprintf(tdisp, 16, "%.1f°C", t_min);
+	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+	cairo_select_font_face (cr, "Sans",
+		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, 18);
+	cairo_move_to (cr, 102, 496);
+	cairo_show_text (cr, tdisp);
+
+	snprintf(tdisp, 16, "%.1f°C", t_max);
+	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+	cairo_select_font_face (cr, "Sans",
+		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, 18);
+	cairo_move_to (cr, 440, 496);
+	cairo_show_text (cr, tdisp);
+#endif
 	return FALSE;
 }
 
-#include "font5x7.h" 
-void font_write(unsigned char *fb, int x, int y, const char *string)
-{
-int rx, ry, v;
-
-	while (*string) {
-		for (ry = 0; ry < 5; ++ry) {
-			for (rx = 0; rx < 7; ++rx) {
-				v = (font5x7_basic[((*string) & 0x7F) - CHAR_OFFSET][ry] >> (rx)) & 1;
-				// fb[(y+ry) * 160 + (x + rx)] = v ? 0 : 0xFF; // black / white
-				fb[((y+rx)*4) * 640 + (x + ry)*4] = v ? 0xff : 0x00; // black / white
-				fb[((y+rx)*4) * 640 + (x + ry)*4 +1] = v ? 0xff : 0x00; // black / white
-				fb[((y+rx)*4) * 640 + (x + ry)*4 +2] = v ? 0xff : 0x00; // black / white
-				// fb[(y+rx) * 160 + (x + ry)] = v ? 0 : fb[(y+rx) * 160 + (x + ry)];  // transparent
-			}
-		}
-		string++;
-		x += 6;
-	}
-}
 
 void
 update_fb(void)
 {
-char tstr[16];
-
-	// g_printerr("min %.1f center %.1f max %.1f\r", t_min, t_center, t_max);
-
-	snprintf(tstr, 16, "%.1f", t_min);
-	font_write(fbdata, 140, 486, tstr);
-	snprintf(tstr, 16, "%.1f", t_max);
-	font_write(fbdata, 440, 486, tstr);
 	gtk_widget_queue_draw(image_darea);
 }
 
 void
 store_shot_clicked(GtkWidget *button, gpointer user_data)
 {
-
+//cairo_surface_t *cairo_get_target (cairo_t *cr);
 	cairo_surface_write_to_png (surface, "shot.png");
 }
 
