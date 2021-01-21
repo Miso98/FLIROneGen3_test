@@ -265,7 +265,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			fbdata[16*y * 640 + x*16] = color_palette[3 * v + 2];  // B
 			fbdata[(16*y * 640 + x*16)+1] = color_palette[3 * v + 1]; // G
 			fbdata[(16*y * 640 + x*16)+2] = color_palette[3 * v]; // R
-			// fbdata[(16*y * 640 + x*16)+3] = 0x7f; // empty
+			fbdata[(16*y * 640 + x*16)+3] = 0x00; // empty
 
 			// copy whole 32bit words hor/vert
 			p1 = (unsigned int *)&fbdata[16*y * 640 + x*16];
@@ -324,11 +324,8 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	}
 #endif
 	if (jpeg_size == 0 && JpgSize > 0) {
-		//unsigned char bla[BUF85SIZE];
-
 		jpeg_size=JpgSize;
 		jpeg_buffer=(unsigned char *)malloc(jpeg_size);
-		// fprintf(stderr, "jpgsize %d %d\n", JpgSize, jpeg_size);
 		memcpy(jpeg_buffer, &buf85[28+ThermalSize], jpeg_size);
 	}
  
@@ -339,14 +336,13 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			FFC=0; // drop first frame after FFC
 		} else {
 			// write(fdwr2, fb_proc2, framesize2);  // colorized RGB Thermal Image
+			update_fb();
 		}
 	}
 
 	// free memory
 	free(fb_proc);                    // thermal RAW
 	free(fb_proc2);                   // visible jpg
-
-	update_fb();
 }
 
 static int

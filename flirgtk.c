@@ -46,13 +46,16 @@ static cairo_surface_t *surface = NULL;
 unsigned char fbuffer[640*500*4];
 unsigned char *fbdata;
 unsigned char *color_palette;
+gboolean pending=FALSE;
+gboolean ircam=TRUE;
+gboolean viscam=FALSE;
 gboolean flir_run = FALSE;
 
 gpointer cam_thread_main(gpointer user_data);
 
 extern double t_min, t_max, t_center;
 #define BUF85SIZE 1048576
-unsigned char *jpeg_buffer;
+unsigned char *jpeg_buffer=NULL;
 unsigned int jpeg_size=0;
 
 
@@ -75,11 +78,12 @@ int stride;
 	stride = cairo_format_stride_for_width (CAIRO_FORMAT_ARGB32, 640);
 	// g_printerr("stride %d\n", stride);
 	surface = cairo_image_surface_create_for_data (fbuffer,
-                                     CAIRO_FORMAT_RGB24,
+                                     CAIRO_FORMAT_ARGB32,
                                      640,
                                      500,
                                      stride);
 	fbdata = cairo_image_surface_get_data(surface);
+	// memset(fbdata, 0x00, 640*500*4);
 	draw_palette();
 
 	/* We've handled the configure event, no need for further processing. */
@@ -97,27 +101,38 @@ cairo_surface_t *jpeg_surface;
 static int fcnt=0;
 
 	// g_printerr("draw event\n");
+	cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 0.7);
+	cairo_paint (cr);
 
 	// first draw the frame buffer containing the IR frame
 #if 1
-	if (jpeg_size != 0) {
-		// g_printerr(" draw event %d\n", jpeg_size);
-		jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
-//		cairo_scale (cr, (1./2.25), (1./2.25));
-		cairo_set_source_surface (cr, jpeg_surface, 0, 0);
-		cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
+	if (ircam) {
+		cairo_set_source_surface (cr, surface, 0, 0);
+		cairo_set_operator (cr, CAIRO_OPERATOR_OVERLAY);
 		cairo_paint (cr);
-		cairo_surface_destroy (jpeg_surface);
-		jpeg_size=0;
 	}
 #endif
-	cairo_set_source_surface (cr, surface, 0, 0);
-	cairo_set_operator (cr, CAIRO_OPERATOR_OVER);
-	cairo_paint (cr);
-
 #if 1
-	// then draw decoration
+	if (jpeg_size != 0 && jpeg_buffer != NULL) {
+		// g_printerr(" draw event %d\n", jpeg_size);
+		if (viscam) {
+			jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
+			cairo_save(cr);
+			cairo_scale (cr, (1./2.25), (1./2.25));
+			cairo_set_source_surface (cr, jpeg_surface, 0, 0);
+			cairo_set_operator (cr, CAIRO_OPERATOR_OVERLAY);
+			cairo_paint (cr);
+			cairo_restore(cr);
+			cairo_surface_destroy (jpeg_surface);
+		}
+		jpeg_size=0;
+		jpeg_buffer=NULL;
+	}
+#endif
+#if 1
+	// then draw decoration on top
 //	cairo_scale (cr, 1, 1);
+	cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
 
 	// crosshair in the center
 	cairo_set_line_width (cr, 3);
@@ -164,6 +179,8 @@ static int fcnt=0;
 	cairo_move_to (cr, 440, 496);
 	cairo_show_text (cr, tdisp);
 #endif
+	pending = FALSE;
+
 	return FALSE;
 }
 
@@ -171,7 +188,10 @@ static int fcnt=0;
 void
 update_fb(void)
 {
-	gtk_widget_queue_draw(image_darea);
+	if (!pending) {
+		pending=TRUE;
+		gtk_widget_queue_draw(image_darea);
+	}
 }
 
 void
@@ -192,6 +212,18 @@ void
 stop_clicked(GtkWidget *button, gpointer user_data)
 {
 	flir_run = FALSE;
+}
+
+void
+ircam_clicked(GtkWidget *button, gpointer user_data)
+{
+	ircam = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button));
+}
+
+void
+viscam_clicked(GtkWidget *button, gpointer user_data)
+{
+	viscam = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button));
 }
 
 static void
@@ -314,6 +346,19 @@ GtkWidget *w;
 		gtk_container_add (GTK_CONTAINER (hbox), w);
 		g_signal_connect (w, "changed",
 			G_CALLBACK (palette_changed), NULL);
+
+		w = gtk_toggle_button_new_with_label("IR");
+		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(w), TRUE);
+		gtk_container_add (GTK_CONTAINER (hbox), w);
+		g_signal_connect (w, "clicked",
+			G_CALLBACK (ircam_clicked), NULL);
+
+		w = gtk_toggle_button_new_with_label("Vis");
+		gtk_container_add (GTK_CONTAINER (hbox), w);
+		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(w), FALSE);
+		g_signal_connect (w, "clicked",
+			G_CALLBACK (viscam_clicked), NULL);
+
 
 		image_darea = gtk_drawing_area_new ();
 		/* set a minimum size */
