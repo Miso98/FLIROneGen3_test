@@ -39,6 +39,9 @@
 
 static GtkWidget *window = NULL;
 static GtkWidget *image_darea = NULL;
+static GtkApplication *gapp;
+static GtkWidget *play_button, *stop_button;
+
 static cairo_surface_t *surface = NULL;
 
 // internal frame buffer with 640x480 pixels of 4 byte each,
@@ -75,10 +78,10 @@ int stride;
 
 	gtk_widget_get_allocation (widget, &allocation);
 	// g_printerr("configure event %d x %d\n", allocation.width, allocation.height);
-	stride = cairo_format_stride_for_width (CAIRO_FORMAT_ARGB32, 640);
+	stride = cairo_format_stride_for_width (CAIRO_FORMAT_RGB24, 640);
 	// g_printerr("stride %d\n", stride);
 	surface = cairo_image_surface_create_for_data (fbuffer,
-                                     CAIRO_FORMAT_ARGB32,
+                                     CAIRO_FORMAT_RGB24,
                                      640,
                                      500,
                                      stride);
@@ -98,21 +101,14 @@ draw_event (GtkWidget *widget,
 {
 char tdisp[16];
 cairo_surface_t *jpeg_surface;
-static int fcnt=0;
 
-	// g_printerr("draw event\n");
-	cairo_set_source_rgba (cr, 0.0, 0.0, 0.0, 0.7);
-	cairo_paint (cr);
-
+if (pending) {
+	cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
 	// first draw the frame buffer containing the IR frame
-#if 1
 	if (ircam) {
 		cairo_set_source_surface (cr, surface, 0, 0);
-		cairo_set_operator (cr, CAIRO_OPERATOR_OVERLAY);
 		cairo_paint (cr);
 	}
-#endif
-#if 1
 	if (jpeg_size != 0 && jpeg_buffer != NULL) {
 		// g_printerr(" draw event %d\n", jpeg_size);
 		if (viscam) {
@@ -120,19 +116,18 @@ static int fcnt=0;
 			cairo_save(cr);
 			cairo_scale (cr, (1./2.25), (1./2.25));
 			cairo_set_source_surface (cr, jpeg_surface, 0, 0);
-			cairo_set_operator (cr, CAIRO_OPERATOR_OVERLAY);
-			cairo_paint (cr);
+			// cairo_set_operator (cr, CAIRO_OPERATOR_OVERLAY);
+			if (ircam)
+				cairo_paint_with_alpha (cr, 0.3);
+			else
+				cairo_paint (cr);
 			cairo_restore(cr);
 			cairo_surface_destroy (jpeg_surface);
 		}
 		jpeg_size=0;
 		jpeg_buffer=NULL;
 	}
-#endif
-#if 1
 	// then draw decoration on top
-//	cairo_scale (cr, 1, 1);
-	cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
 
 	// crosshair in the center
 	cairo_set_line_width (cr, 3);
@@ -178,9 +173,9 @@ static int fcnt=0;
 	cairo_set_font_size (cr, 18);
 	cairo_move_to (cr, 440, 496);
 	cairo_show_text (cr, tdisp);
-#endif
-	pending = FALSE;
 
+	pending = FALSE;
+}
 	return FALSE;
 }
 
@@ -204,14 +199,20 @@ store_shot_clicked(GtkWidget *button, gpointer user_data)
 void
 start_clicked(GtkWidget *button, gpointer user_data)
 {
-	flir_run = TRUE;
-	g_thread_new ("CAM thread", cam_thread_main, NULL);
+	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(play_button))) {
+		flir_run = TRUE;
+		g_thread_new ("CAM thread", cam_thread_main, NULL);
+		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(stop_button), FALSE);
+	}
 }
 
 void
 stop_clicked(GtkWidget *button, gpointer user_data)
 {
-	flir_run = FALSE;
+	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(stop_button))) {
+		flir_run = FALSE;
+		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(play_button), FALSE);
+	}
 }
 
 void
@@ -289,17 +290,20 @@ int act;
 
 
 GtkWidget *
-create_main_window ()
+create_main_window (void)
 {
+GtkWidget *gappw;
 GtkWidget *box;
 GtkWidget *hbox;
-GtkWidget *w;
+GtkWidget *w, *i;
+
 // GtkWidget *da;
 
 	// default color palette
 	color_palette = palette_Rainbow;
 
 	if (!window) {
+//		gappw=gtk_application_window_new(gapp);
 		window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 		gtk_window_set_title (GTK_WINDOW (window), "FLIR One");
 
@@ -316,18 +320,26 @@ GtkWidget *w;
 		// 32 GTK_ICON_SIZE_DND
 		// media-playback-start
 		// w = gtk_button_new_with_label("Start");
-		w = gtk_button_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
-		gtk_container_add (GTK_CONTAINER (hbox), w);
+		// w = gtk_button_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
+		play_button = gtk_toggle_button_new();
+		i = gtk_image_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
+		gtk_button_set_image(GTK_BUTTON(play_button),i);
+		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(play_button), FALSE);
+		gtk_container_add (GTK_CONTAINER (hbox), play_button);
 
-		g_signal_connect (w, "clicked",
+		g_signal_connect (play_button, "clicked",
 			G_CALLBACK (start_clicked), NULL);
 
 		// media-playback-stop
 		// w = gtk_button_new_with_label("Stop");
-		w = gtk_button_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
-		gtk_container_add (GTK_CONTAINER (hbox), w);
+		//w = gtk_button_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
+		stop_button = gtk_toggle_button_new();
+		i = gtk_image_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
+		gtk_button_set_image(GTK_BUTTON(stop_button),i);
+		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(stop_button), TRUE);
+		gtk_container_add (GTK_CONTAINER (hbox), stop_button);
 
-		g_signal_connect (w, "clicked",
+		g_signal_connect (stop_button, "clicked",
 			G_CALLBACK (stop_clicked), NULL);
 
 		// drop down for color palettes
@@ -359,6 +371,10 @@ GtkWidget *w;
 		g_signal_connect (w, "clicked",
 			G_CALLBACK (viscam_clicked), NULL);
 
+		w = gtk_scale_new_with_range (GTK_ORIENTATION_VERTICAL,
+                          0.0,
+                          1.0,
+                          .01);
 
 		image_darea = gtk_drawing_area_new ();
 		/* set a minimum size */
@@ -390,6 +406,7 @@ GtkWidget *w;
 int
 main(int argc, char **argv)
 {
+//	gapp=gtk_application_new("org.gnome.flirgtk", G_APPLICATION_FLAGS_NONE);
 	gtk_init(&argc, &argv);
 
 	create_main_window();

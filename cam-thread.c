@@ -265,7 +265,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			fbdata[16*y * 640 + x*16] = color_palette[3 * v + 2];  // B
 			fbdata[(16*y * 640 + x*16)+1] = color_palette[3 * v + 1]; // G
 			fbdata[(16*y * 640 + x*16)+2] = color_palette[3 * v]; // R
-			fbdata[(16*y * 640 + x*16)+3] = 0x00; // empty
+			// fbdata[(16*y * 640 + x*16)+3] = 0x00; // empty
 
 			// copy whole 32bit words hor/vert
 			p1 = (unsigned int *)&fbdata[16*y * 640 + x*16];
