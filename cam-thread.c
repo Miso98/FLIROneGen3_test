@@ -21,7 +21,7 @@
 
 // from main thread
 void update_fb(void);
-extern unsigned char *fbdata;
+//extern unsigned char *fbdata;
 extern gboolean flir_run;
 extern unsigned char *color_palette;
 
@@ -71,6 +71,7 @@ unsigned char buf85[BUF85SIZE];
 
 extern unsigned char *jpeg_buffer;
 extern unsigned int jpeg_size;
+extern unsigned char *ir_buffer;
 
 
 double
@@ -90,7 +91,7 @@ raw2temperature(unsigned short RAW)
 
 void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char buf[], unsigned char *colormap) 
 {
-	static int fcnt=0;
+	//static int fcnt=0;
 	// error handler
 	time_t now1;
 	now1 = time(NULL); 
@@ -245,9 +246,13 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	// font_write(fb_proc, 160-6, maxy, "<");
 	// font_write(fb_proc, maxx, 120-8, "|");
 
+	if (ir_buffer == NULL) {
+		ir_buffer = (unsigned char *)malloc(640*480*4);
+		fprintf(stderr, "nb\n");
+	}
 	for (y = 0; y < 120; ++y) {
 		for (x = 0; x < 160; ++x) {
-			unsigned int *p1, *pc;
+			// unsigned int *p1, *pc;
 			// fb_proc is the gray scale frame buffer
 			v=fb_proc[y * 160 + x] ;   // unsigned char!!
 #if 0
@@ -261,6 +266,16 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			//fbdata[(4*y * 640 + x*4)+2] = colormap[3 * v]; // R
 			//fbdata[(4*y * 640 + x*4)+3] = 0x00; // empty
 
+//			fprintf(stderr, "%d %d %d %d\n",x ,y, (4*y * 160 + x*4), v);
+				ir_buffer[4*y * 160 + x*4] = 
+					color_palette[3 * v + 2];  // B
+				ir_buffer[(4*y * 160 + x*4)+1] = 
+					color_palette[3 * v + 1]; // G
+				ir_buffer[(4*y * 160 + x*4)+2] = 
+					color_palette[3 * v]; // R
+				ir_buffer[(4*y * 160 + x*4)+3] = 
+					0x00; // A, empty
+#if 0
 			// assemble one 32 bit pixel
 			fbdata[16*y * 640 + x*16] = color_palette[3 * v + 2];  // B
 			fbdata[(16*y * 640 + x*16)+1] = color_palette[3 * v + 1]; // G
@@ -304,6 +319,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			*pc = *p1;
 			pc = (unsigned int *)&fbdata[(4*((y*4)+3) * 640 + x*16)+12];
 			*pc = *p1;
+#endif
 #endif
 		}
 	}

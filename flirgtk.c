@@ -20,9 +20,8 @@
 #include <gtk/gtk.h>
 
 #include <sys/types.h>
-       #include <sys/stat.h>
-       #include <fcntl.h>
-
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "cairo_jpg/src/cairo_jpg.h"
 
@@ -39,15 +38,16 @@
 
 static GtkWidget *window = NULL;
 static GtkWidget *image_darea = NULL;
-static GtkApplication *gapp;
+// static GtkApplication *gapp;
 static GtkWidget *play_button, *stop_button;
+ // we paint everything in here and then into the drawing area widget
+static cairo_surface_t *psurface;
 
-static cairo_surface_t *surface = NULL;
+//static cairo_surface_t *surface = NULL;
 
 // internal frame buffer with 640x480 pixels of 4 byte each,
 // first byte unused, R, G, B 0x00RRGGBB
-unsigned char fbuffer[640*500*4];
-unsigned char *fbdata;
+//unsigned char *fbdata;
 unsigned char *color_palette;
 gboolean pending=FALSE;
 gboolean ircam=TRUE;
@@ -58,11 +58,12 @@ gpointer cam_thread_main(gpointer user_data);
 
 extern double t_min, t_max, t_center;
 #define BUF85SIZE 1048576
+unsigned char *ir_buffer=NULL; // IR image as 24 bit RGB+A
 unsigned char *jpeg_buffer=NULL;
 unsigned int jpeg_size=0;
 
 
-void draw_palette(void);
+//void draw_palette(void);
 
 
 static gboolean
@@ -70,53 +71,121 @@ configure_event (GtkWidget         *widget,
                           GdkEventConfigure *event,
                           gpointer           data)
 {
-GtkAllocation allocation;
-int stride;
+//GtkAllocation allocation;
 
-	if (surface)
-		cairo_surface_destroy (surface);
-
-	gtk_widget_get_allocation (widget, &allocation);
 	// g_printerr("configure event %d x %d\n", allocation.width, allocation.height);
-	stride = cairo_format_stride_for_width (CAIRO_FORMAT_RGB24, 640);
-	// g_printerr("stride %d\n", stride);
-	surface = cairo_image_surface_create_for_data (fbuffer,
-                                     CAIRO_FORMAT_RGB24,
-                                     640,
-                                     500,
-                                     stride);
-	fbdata = cairo_image_surface_get_data(surface);
+//	if (surface)
+//		cairo_surface_destroy (surface);
+
+//	gtk_widget_get_allocation (widget, &allocation);
+//	surface = cairo_image_surface_create (CAIRO_FORMAT_RGB24,
+//                                     640,
+//                                     500);
+//	fbdata = cairo_image_surface_get_data(surface);
 	// memset(fbdata, 0x00, 640*500*4);
-	draw_palette();
+//	draw_palette();
 
 	/* We've handled the configure event, no need for further processing. */
 	return TRUE;
 }
 
+// 256 colors (8bit), two hor pixel per color
+// piture width = 640, center scale, i.e. start at 64
+cairo_surface_t
+*draw_palette(void)
+{
+unsigned int *p1, *pc;
+int x,y;
+static cairo_surface_t *ps=NULL;
+//static unsigned char *cm=NULL;
+cairo_t *cr;
+unsigned char *fbdata;
+char tdisp[16];
+
+#define P_XPOS 175
+
+	if (ps==NULL)
+		ps=cairo_image_surface_create(CAIRO_FORMAT_RGB24, 640, 20);
+	cr=cairo_create(ps);
+	fbdata=cairo_image_surface_get_data(ps);
+	memset(fbdata,0,(640*20*4));
+	y=5;
+	for (x=0; x<256; x++) {
+		fbdata[4* y * 640 + ((x+P_XPOS)*4)] = color_palette[3 * x + 2];  // B
+		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+1] = color_palette[3 * x + 1]; // G
+		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+2] = color_palette[3 * x]; // R
+	}
+	y=5;
+	p1 = (unsigned int *)&fbdata[4 * y * 640 + (P_XPOS*4)]; // pointer to start of line
+	for (y=5; y<15; y++) {
+		pc = (unsigned int *)&fbdata[4 * y * 640 + (P_XPOS*4)]; // pointer to start of copy line
+		memcpy(pc,p1,256*4);
+	}
+
+	// update palette scale temperature range
+	snprintf(tdisp, 16, "%.1f°C", t_min);
+	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+	cairo_select_font_face (cr, "Sans",
+		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, 18);
+	cairo_move_to (cr, 102, 16);
+	cairo_show_text (cr, tdisp);
+
+	snprintf(tdisp, 16, "%.1f°C", t_max);
+	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+	cairo_select_font_face (cr, "Sans",
+		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+	cairo_set_font_size (cr, 18);
+	cairo_move_to (cr, 440, 16);
+	cairo_show_text (cr, tdisp);
+
+	cairo_surface_flush(ps);
+	cairo_destroy(cr);
+
+	return ps;
+}
+
 
 static gboolean
 draw_event (GtkWidget *widget,
-               cairo_t   *cr,
+               cairo_t   *wcr,
                gpointer   data)
 {
 char tdisp[16];
+//unsigned char *fbdata;
 cairo_surface_t *jpeg_surface;
+cairo_surface_t *ir_surface;
+cairo_surface_t *palette_surface;
+cairo_t *cr;
+
 
 if (pending) {
+	cr=cairo_create(psurface);
+
+//	cairo_set_source_rgb(cr, 0, 0, 0);
+//	cairo_paint (cr);
 	cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
+
 	// first draw the frame buffer containing the IR frame
-	if (ircam) {
-		cairo_set_source_surface (cr, surface, 0, 0);
-		cairo_paint (cr);
+	if (ircam && ir_buffer!=NULL) {
+		ir_surface=cairo_image_surface_create_for_data (ir_buffer,
+                                     CAIRO_FORMAT_RGB24,
+                                     160,
+                                     120,
+                                     4*160);
+			cairo_save(cr);
+			cairo_scale (cr, 4.0, 4.0);
+			cairo_set_source_surface (cr, ir_surface, 0, 0);
+			cairo_paint (cr);
+			cairo_restore(cr);
+			cairo_surface_destroy (ir_surface);
 	}
 	if (jpeg_size != 0 && jpeg_buffer != NULL) {
-		// g_printerr(" draw event %d\n", jpeg_size);
 		if (viscam) {
 			jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
 			cairo_save(cr);
 			cairo_scale (cr, (1./2.25), (1./2.25));
 			cairo_set_source_surface (cr, jpeg_surface, 0, 0);
-			// cairo_set_operator (cr, CAIRO_OPERATOR_OVERLAY);
 			if (ircam)
 				cairo_paint_with_alpha (cr, 0.3);
 			else
@@ -127,7 +196,16 @@ if (pending) {
 		jpeg_size=0;
 		jpeg_buffer=NULL;
 	}
+
 	// then draw decoration on top
+	// the color palette with min/max temperatures
+	palette_surface=draw_palette();
+	cairo_save(cr);
+	cairo_rectangle(cr,0,481,640,500);
+	cairo_clip(cr);
+	cairo_set_source_surface (cr, palette_surface, 0, 481);
+	cairo_paint (cr);
+	cairo_restore(cr);
 
 	// crosshair in the center
 	cairo_set_line_width (cr, 3);
@@ -157,25 +235,14 @@ if (pending) {
 	cairo_move_to (cr, 330, 220);
 	cairo_show_text (cr, tdisp);
 
-	// update palette scale temperature range
-	snprintf(tdisp, 16, "%.1f°C", t_min);
-	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
-	cairo_select_font_face (cr, "Sans",
-		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-	cairo_set_font_size (cr, 18);
-	cairo_move_to (cr, 102, 496);
-	cairo_show_text (cr, tdisp);
+	//cairo_surface_write_to_png (cairo_get_target(cr), "shot.png");
 
-	snprintf(tdisp, 16, "%.1f°C", t_max);
-	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
-	cairo_select_font_face (cr, "Sans",
-		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-	cairo_set_font_size (cr, 18);
-	cairo_move_to (cr, 440, 496);
-	cairo_show_text (cr, tdisp);
-
+	cairo_destroy(cr);
 	pending = FALSE;
 }
+	cairo_set_source_surface (wcr, psurface, 0, 0);
+	cairo_paint (wcr);
+
 	return FALSE;
 }
 
@@ -193,7 +260,7 @@ void
 store_shot_clicked(GtkWidget *button, gpointer user_data)
 {
 //cairo_surface_t *cairo_get_target (cairo_t *cr);
-	cairo_surface_write_to_png (surface, "shot.png");
+//	cairo_surface_write_to_png (surface, "shot.png");
 }
 
 void
@@ -201,6 +268,8 @@ start_clicked(GtkWidget *button, gpointer user_data)
 {
 	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(play_button))) {
 		flir_run = TRUE;
+		if (ir_buffer == NULL)
+			g_printerr("ir_buffer\n");
 		g_thread_new ("CAM thread", cam_thread_main, NULL);
 		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(stop_button), FALSE);
 	}
@@ -243,28 +312,6 @@ handle_timeout (gpointer user_data)
 	return TRUE;
 }
 
-// 256 colors (8bit), two hor pixel per color
-// piture width = 640, center scale, i.e. start at 64
-void
-draw_palette(void)
-{
-unsigned int *p1, *pc;
-int x,y;
-
-	y=481; // leave one line blank/black
-	for (x=0; x<256; x++) {
-		fbdata[4*y * 640 + (x+174)*4] = color_palette[3 * x + 2];  // B
-		fbdata[(4*y * 640 + (x+174)*4)+1] = color_palette[3 * x + 1]; // G
-		fbdata[(4*y * 640 + (x+174)*4)+2] = color_palette[3 * x]; // R
-	}
-	y=481;
-	p1 = (unsigned int *)&fbdata[4*y * 640]; // pointer to start of line
-	for (y=482; y<500; y++) {
-		pc = (unsigned int *)&fbdata[4*y * 640]; // pointer to start of copy line
-		memcpy(pc,p1,640*4);
-	}
-}
-
 void
 palette_changed (GtkComboBox *widget, gpointer user_data)
 {
@@ -284,7 +331,7 @@ int act;
 		if (act == 7) color_palette = palette_Iron2;
 		if (act == 8) color_palette = palette_Iron_Black;
 		if (act == 9) color_palette = palette_Rainbow;
-		draw_palette();
+		// draw_palette();
 	};
 }
 
@@ -292,7 +339,7 @@ int act;
 GtkWidget *
 create_main_window (void)
 {
-GtkWidget *gappw;
+//GtkWidget *gappw;
 GtkWidget *box;
 GtkWidget *hbox;
 GtkWidget *w, *i;
@@ -376,6 +423,9 @@ GtkWidget *w, *i;
                           1.0,
                           .01);
 
+		//psurface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, 640, 500);
+		psurface = cairo_image_surface_create (CAIRO_FORMAT_RGB24, 640, 500);
+
 		image_darea = gtk_drawing_area_new ();
 		/* set a minimum size */
 		gtk_widget_set_size_request (image_darea, 640, 500);
@@ -388,7 +438,6 @@ GtkWidget *w, *i;
 			G_CALLBACK (configure_event), NULL);
 
 		// camera-photo
-		// w = gtk_button_new_with_label("Shot");
 		w = gtk_button_new_from_icon_name("camera-photo", GTK_ICON_SIZE_DND);
 		gtk_container_add (GTK_CONTAINER (box), w);
 
