@@ -22,6 +22,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <time.h>
+// #include <limits.h>
 
 #include "cairo_jpg/src/cairo_jpg.h"
 
@@ -36,34 +38,32 @@
 #include "palettes/Iron_Black.h"
 #include "palettes/Rainbow.h"
 
+
+// UI variables
 static GtkWidget *window = NULL;
 static GtkWidget *image_darea = NULL;
 // static GtkApplication *gapp;
 static GtkWidget *play_button, *stop_button;
  // we paint everything in here and then into the drawing area widget
 static cairo_surface_t *psurface;
+static double vis_surface_alpha=0.3;
+static gboolean take_vis_shot=FALSE;
 
-//static cairo_surface_t *surface = NULL;
 
-// internal frame buffer with 640x480 pixels of 4 byte each,
-// first byte unused, R, G, B 0x00RRGGBB
-//unsigned char *fbdata;
-unsigned char *color_palette;
+// variables to communicate with cam thread
 gboolean pending=FALSE;
 gboolean ircam=TRUE;
 gboolean viscam=FALSE;
 gboolean flir_run = FALSE;
+unsigned char *color_palette;
 
 gpointer cam_thread_main(gpointer user_data);
 
 extern double t_min, t_max, t_center;
-#define BUF85SIZE 1048576
-unsigned char *ir_buffer=NULL; // IR image as 24 bit RGB+A
+unsigned char *ir_buffer=NULL;
 unsigned char *jpeg_buffer=NULL;
 unsigned int jpeg_size=0;
 
-
-//void draw_palette(void);
 
 
 static gboolean
@@ -145,6 +145,29 @@ char tdisp[16];
 	return ps;
 }
 
+void
+store_vis_shot(unsigned char *jpg_buffer, unsigned int jpg_size)
+{
+time_t now;
+struct tm *loctime;
+char pname[PATH_MAX];
+char fname[30];
+int fd;
+
+	now = time(NULL);
+	loctime = localtime (&now);
+	strftime (fname, 30, "viscam-%y%m%d%H%M%S", loctime);
+	strncpy(pname, "./", PATH_MAX-30-4); // leave room for filename+extension
+	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
+	strncat(pname, ".jpg", PATH_MAX-1); // -5 to leave space for trailing \0 byte + extension
+
+	fd=open(pname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (fd>=0) {
+		write (fd, jpg_buffer, jpg_size);
+		close(fd);
+	}
+}
+
 
 static gboolean
 draw_event (GtkWidget *widget,
@@ -152,94 +175,91 @@ draw_event (GtkWidget *widget,
                gpointer   data)
 {
 char tdisp[16];
-//unsigned char *fbdata;
 cairo_surface_t *jpeg_surface;
 cairo_surface_t *ir_surface;
 cairo_surface_t *palette_surface;
 cairo_t *cr;
 
 
-if (pending) {
-	cr=cairo_create(psurface);
+	if (pending) {
+		cr=cairo_create(psurface);
+		cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
 
-//	cairo_set_source_rgb(cr, 0, 0, 0);
-//	cairo_paint (cr);
-	cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
-
-	// first draw the frame buffer containing the IR frame
-	if (ircam && ir_buffer!=NULL) {
-		ir_surface=cairo_image_surface_create_for_data (ir_buffer,
-                                     CAIRO_FORMAT_RGB24,
-                                     160,
-                                     120,
-                                     4*160);
-			cairo_save(cr);
-			cairo_scale (cr, 4.0, 4.0);
-			cairo_set_source_surface (cr, ir_surface, 0, 0);
-			cairo_paint (cr);
-			cairo_restore(cr);
-			cairo_surface_destroy (ir_surface);
-	}
-	if (jpeg_size != 0 && jpeg_buffer != NULL) {
-		if (viscam) {
-			jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
-			cairo_save(cr);
-			cairo_scale (cr, (1./2.25), (1./2.25));
-			cairo_set_source_surface (cr, jpeg_surface, 0, 0);
-			if (ircam)
-				cairo_paint_with_alpha (cr, 0.3);
-			else
+		// first draw the frame buffer containing the IR frame
+		if (ircam && ir_buffer!=NULL) {
+			ir_surface=cairo_image_surface_create_for_data (ir_buffer,
+	                                     CAIRO_FORMAT_RGB24,
+	                                     160,
+	                                     120,
+	                                     4*160);
+				cairo_save(cr);
+				cairo_scale (cr, 4.0, 4.0);
+				cairo_set_source_surface (cr, ir_surface, 0, 0);
 				cairo_paint (cr);
-			cairo_restore(cr);
-			cairo_surface_destroy (jpeg_surface);
+				cairo_restore(cr);
+				cairo_surface_destroy (ir_surface);
 		}
-		jpeg_size=0;
-		jpeg_buffer=NULL;
+		if (jpeg_size != 0 && jpeg_buffer != NULL) {
+			if (take_vis_shot) {
+				take_vis_shot=FALSE;
+				store_vis_shot(jpeg_buffer, jpeg_size);
+			}
+			if (viscam) {
+				jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
+				cairo_save(cr);
+				cairo_scale (cr, (1./2.25), (1./2.25));
+				cairo_set_source_surface (cr, jpeg_surface, 0, 0);
+				if (ircam)
+					cairo_paint_with_alpha (cr, vis_surface_alpha);
+				else
+					cairo_paint (cr);
+				cairo_restore(cr);
+				cairo_surface_destroy (jpeg_surface);
+			}
+			jpeg_size=0;
+			jpeg_buffer=NULL;
+		}
+
+		// then draw decoration on top
+		// the color palette with min/max temperatures
+		palette_surface=draw_palette();
+		cairo_save(cr);
+		cairo_rectangle(cr,0,481,640,500);
+		cairo_clip(cr);
+		cairo_set_source_surface (cr, palette_surface, 0, 481);
+		cairo_paint (cr);
+		cairo_restore(cr);
+	
+		// crosshair in the center
+		cairo_set_line_width (cr, 3);
+		cairo_set_source_rgb (cr, 0, 0, 0);
+		cairo_move_to(cr, 320, 200);
+		cairo_line_to(cr, 320, 280);
+		cairo_stroke (cr);
+		cairo_move_to(cr, 280, 240);
+		cairo_line_to(cr, 360, 240);
+		cairo_stroke (cr);
+		cairo_set_line_width (cr, 1);
+		cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+		cairo_move_to(cr, 320, 200);
+		cairo_line_to(cr, 320, 280);
+		cairo_stroke (cr);
+		cairo_move_to(cr, 280, 240);
+		cairo_line_to(cr, 360, 240);
+		cairo_stroke (cr);
+	
+		// print center temperature near crosshair
+		snprintf(tdisp, 16, "%.1f°C", t_center);
+		cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+		cairo_select_font_face (cr, "Sans",
+			CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+		cairo_set_font_size (cr, 24);
+		cairo_move_to (cr, 330, 220);
+		cairo_show_text (cr, tdisp);
+	
+		cairo_destroy(cr);
+		pending = FALSE;
 	}
-
-	// then draw decoration on top
-	// the color palette with min/max temperatures
-	palette_surface=draw_palette();
-	cairo_save(cr);
-	cairo_rectangle(cr,0,481,640,500);
-	cairo_clip(cr);
-	cairo_set_source_surface (cr, palette_surface, 0, 481);
-	cairo_paint (cr);
-	cairo_restore(cr);
-
-	// crosshair in the center
-	cairo_set_line_width (cr, 3);
-	cairo_set_source_rgb (cr, 0, 0, 0);
-	cairo_move_to(cr, 320, 200);
-	cairo_line_to(cr, 320, 280);
-	cairo_stroke (cr);
-	cairo_move_to(cr, 280, 240);
-	cairo_line_to(cr, 360, 240);
-	cairo_stroke (cr);
-	cairo_set_line_width (cr, 1);
-	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
-	cairo_move_to(cr, 320, 200);
-	cairo_line_to(cr, 320, 280);
-	cairo_stroke (cr);
-	cairo_move_to(cr, 280, 240);
-	cairo_line_to(cr, 360, 240);
-	cairo_stroke (cr);
-
-	// print center temperature near crosshair
-	snprintf(tdisp, 16, "%.1f°C", t_center);
-	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
-	cairo_select_font_face (cr, "Sans",
-		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-	cairo_set_font_size (cr, 24);
-	// cairo_text_extents (cr, "a", &te);
-	cairo_move_to (cr, 330, 220);
-	cairo_show_text (cr, tdisp);
-
-	//cairo_surface_write_to_png (cairo_get_target(cr), "shot.png");
-
-	cairo_destroy(cr);
-	pending = FALSE;
-}
 	cairo_set_source_surface (wcr, psurface, 0, 0);
 	cairo_paint (wcr);
 
@@ -256,11 +276,26 @@ update_fb(void)
 	}
 }
 
+//
+// store the current picture frame into a file
+//
 void
 store_shot_clicked(GtkWidget *button, gpointer user_data)
 {
-//cairo_surface_t *cairo_get_target (cairo_t *cr);
-//	cairo_surface_write_to_png (surface, "shot.png");
+time_t now;
+struct tm *loctime;
+char pname[PATH_MAX];
+char fname[30];
+
+	now = time(NULL);
+	loctime = localtime (&now);
+	strftime (fname, 30, "ircam-%y%m%d%H%M%S", loctime);
+	strncpy(pname, "./", PATH_MAX-30-4); // leave room for filename+extension
+	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
+	strncat(pname, ".png", PATH_MAX-1); // -5 to leave space for trailing \0 byte + extension
+
+	cairo_surface_write_to_png (psurface, pname);
+	take_vis_shot=TRUE;
 }
 
 void
