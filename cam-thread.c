@@ -18,6 +18,7 @@
  */
 
 #include <gtk/gtk.h>
+#include <cJSON.h>
 
 // from main thread
 void update_fb(void);
@@ -28,6 +29,7 @@ extern unsigned char *color_palette;
 
 
 #include <unistd.h>
+#include <ctype.h>
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
@@ -41,19 +43,17 @@ extern unsigned char *color_palette;
 #include <fcntl.h>
 #include <math.h>
 
+#include "cam-thread.h"
 #include "plank.h"
 
 
 // -----------------START-ORG-CODE------------------------------------------
 
-
-// #include "jpeglib.h"
-
 #define VENDOR_ID 0x09cb
 #define PRODUCT_ID 0x1996
 
 static struct libusb_device_handle *devh = NULL;
-int filecount=0;
+//int filecount=0;
 struct timeval t1, t2;
 long long fps_t;
 
@@ -72,6 +72,125 @@ unsigned char buf85[BUF85SIZE];
 extern unsigned char *jpeg_buffer;
 extern unsigned int jpeg_size;
 extern unsigned char *ir_buffer;
+
+struct shutter_state_t shutter_state;
+struct battery_state_t battery_state;
+
+// EP81 device status message (JSON)
+// {
+//   "type":"batteryChargingCurrentUpdate",
+//   "data":
+//   {
+//     "chargingCurrent":0
+//   }
+// }
+// {
+//   "type":"batteryChargingStateUpdate",
+//   "data":
+//   {
+//     "chargingState":"stateNoCharging"
+//   }
+// }
+// {
+//    "type":"batteryVoltageUpdate",
+//    "data":
+//    {
+//      "voltage":3.76999998092651,
+//      "percentage":77
+//    }
+// }
+
+void
+parse_status(unsigned char *buf)
+{
+	cJSON *status_json = cJSON_Parse((char *)buf);
+	const cJSON *res = NULL;
+
+	if (status_json == NULL)
+		return;
+
+	res = cJSON_GetObjectItemCaseSensitive(status_json, "shutterState");
+	if (cJSON_IsString(res) && (res->valuestring != NULL)) {
+		if (strncmp(res->valuestring,"FFC",3)==0) {
+			shutter_state.shutterState=sFFC;
+		} else if (strncmp(res->valuestring,"ON",2)==0) {
+			shutter_state.shutterState=sON;
+		} else {
+			shutter_state.shutterState=sUNKNOWN;
+		}
+	}
+	res = cJSON_GetObjectItemCaseSensitive(status_json, "shutterTemperature");
+	if (cJSON_IsNumber(res)) {
+		shutter_state.shutterTemperature=res->valuedouble;
+	}
+	res = cJSON_GetObjectItemCaseSensitive(status_json, "usbNotifiedTimestamp");
+	if (cJSON_IsNumber(res)) {
+		shutter_state.usbNotifiedTimestamp=res->valuedouble;
+	}
+	res = cJSON_GetObjectItemCaseSensitive(status_json, "usbEnqueuedTimestamp");
+	if (cJSON_IsNumber(res)) {
+		shutter_state.usbEnqueuedTimestamp=res->valuedouble;
+	}
+	res = cJSON_GetObjectItemCaseSensitive(status_json, "ffcState");
+	if (cJSON_IsString(res) && (res->valuestring != NULL)) {
+		if (strncmp(res->valuestring,"FFC_VALID_RAD",13)==0) {
+			shutter_state.ffcState=FFC_VALID_RAD;
+		} else if (strncmp(res->valuestring,"FFC_PROGRESS",12)==0) {
+			shutter_state.ffcState=FFC_PROGRESS;
+		} else {
+			shutter_state.ffcState=FFC_UNKNOWN;
+		}
+	}
+
+	cJSON_Delete(status_json);
+}
+
+void
+parse_config_in(unsigned char *buf)
+{
+	cJSON *config_json = cJSON_Parse((char *)buf);
+	const cJSON *res = NULL;
+	const cJSON *res2 = NULL;
+	const cJSON *res3 = NULL;
+
+	if (config_json == NULL) {
+		fprintf(stderr, "config msg parse json failed\n");
+		return;
+	}// else
+	//	fprintf(stderr, "config msg parse json\n%s\n", buf);
+
+	res = cJSON_GetObjectItemCaseSensitive(config_json, "type");
+	res2 = cJSON_GetObjectItemCaseSensitive(config_json, "data");
+	if (cJSON_IsString(res) && (res->valuestring != NULL)) {
+		if (strncmp(res->valuestring,"batteryVoltageUpdate",20)==0) {
+			res3 = cJSON_GetObjectItemCaseSensitive(res2, "voltage");
+			if (cJSON_IsNumber(res3)) {
+				battery_state.voltage = res3->valuedouble;
+				// printf("bat %.2fV\n", res3->valuedouble);
+			}
+			res3 = cJSON_GetObjectItemCaseSensitive(res2, "percentage");
+			if (cJSON_IsNumber(res3)) {
+				battery_state.percentage = res3->valueint;
+				// printf("bat %f%%\n", res3->valuedouble);
+			}
+		}
+		if (strncmp(res->valuestring,"batteryChargingCurrentUpdate",28)==0) {
+			res3 = cJSON_GetObjectItemCaseSensitive(res2, "chargingCurrent");
+			if (cJSON_IsNumber(res3)) {
+				battery_state.chargingCurrent = res3->valuedouble;
+				// printf("bat %.2fV\n", res3->valuedouble);
+			}
+		}
+		if (strncmp(res->valuestring,"batteryChargingStateUpdate",26)==0) {
+			res3 = cJSON_GetObjectItemCaseSensitive(res2, "chargingCurrent");
+			if (cJSON_IsString(res3) && (res3->valuestring != NULL)) {
+				printf("bat chg state '%s'\n", res3->valuestring);
+			}
+		}
+	}
+
+	cJSON_Delete(config_json);
+}
 
 
 double
@@ -128,7 +247,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	uint32_t FrameSize   = buf85[ 8] + (buf85[ 9] << 8) + (buf85[10] << 16) + (buf85[11] << 24);
 	uint32_t ThermalSize = buf85[12] + (buf85[13] << 8) + (buf85[14] << 16) + (buf85[15] << 24);
 	uint32_t JpgSize     = buf85[16] + (buf85[17] << 8) + (buf85[18] << 16) + (buf85[19] << 24);
-	// uint32_t StatusSize  = buf85[20] + (buf85[21] << 8) + (buf85[22] << 16) + (buf85[23] << 24);
+	uint32_t StatusSize  = buf85[20] + (buf85[21] << 8) + (buf85[22] << 16) + (buf85[23] << 24);
 
 	//printf("FrameSize= %d (+28=%d), ThermalSize %d, JPG %d, StatusSize %d, Pointer %d\n",FrameSize,FrameSize+28, ThermalSize, JpgSize,StatusSize,buf85pointer); 
 
@@ -136,22 +255,31 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 		// wait for next chunk
 		return;
 	}
-  
-	int v;
+
+	if (StatusSize > 10) {
+		parse_status(&buf85[28+ThermalSize+JpgSize]);
+	}
+
+	int i,v;
 	// get a full frame, first print the status
 	t1=t2;
 	gettimeofday(&t2, NULL);
 	// fps as moving average over last 20 frames
 	//  fps_t = (19*fps_t+10000000/(((t2.tv_sec * 1000000) + t2.tv_usec) - ((t1.tv_sec * 1000000) + t1.tv_usec)))/20;
 
-	filecount++;
+	//filecount++;
 	//  printf("#%08i %lld/10 fps:",filecount,fps_t); 
-	//  for (i = 0; i <  StatusSize; i++) {
-	//                    v=28+ThermalSize+JpgSize+i;
-	//                    if(buf85[v]>31) {printf("%c", buf85[v]);}
-	//            }
-	//  printf("\n"); 
-  
+#if 0
+	  for (i = 0; i <  StatusSize; i++) {
+	                    v=28+ThermalSize+JpgSize+i;
+	                    if (buf85[v]>31) {
+	                    	printf("%c", buf85[v]);
+	                    } else {
+	                    	printf("<%02x>", buf85[v]);
+						}
+	            }
+	  printf("\n"); 
+#endif
 	buf85pointer=0;
   
 	unsigned short pix[160*120];   // original Flir 16 Bit RAW
@@ -273,8 +401,8 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 					color_palette[3 * v + 1]; // G
 				ir_buffer[(4*y * 160 + x*4)+2] = 
 					color_palette[3 * v]; // R
-				ir_buffer[(4*y * 160 + x*4)+3] = 
-					0x00; // A, empty
+//				ir_buffer[(4*y * 160 + x*4)+3] = 
+//					0x00; // A, empty
 #if 0
 			// assemble one 32 bit pixel
 			fbdata[16*y * 640 + x*16] = color_palette[3 * v + 2];  // B
@@ -389,22 +517,24 @@ int i;
 		/*
 		char filename[100];
 		sprintf(filename, "EP%s#%05i.bin",ep,filecount);
-		filecount++;
+		//filecount++;
 		FILE *file = fopen(filename, "wb");
 		fwrite(buf, 1, actual_length, file);
 		fclose(file);
 		*/         
 		// hex print of first byte
+#if 1
 		for (i = 0; i <  (((200)<(actual_length))?(200):(actual_length)); i++) {
 			printf(" %02x", buf[i]);
 		}
-
+#else
 		printf("\nSTRING:\n");	
 		for (i = 0; i <  (((200)<(actual_length))?(200):(actual_length)); i++) {
-			if (buf[i]>31) {
+			if (isascii(buf[i])) {
 				printf("%c", buf[i]);
 			}
 		}
+#endif
 		printf("\n");
 	} 
 }       
@@ -506,7 +636,7 @@ int r = 1;
 				}
 				now = time(0); // Get the system time
 				printf("\n:xx %s",ctime(&now));
-				state = 3;   // jump over wait stait 2. Not really using any data from CameraFiles.zip
+				state = 3;  // jump over wait stait 2. Not really using any data from CameraFiles.zip
 				break;
 		        case 2:
 				printf("\nask for CameraFiles.zip on EP 0x83:\n");     
@@ -599,16 +729,42 @@ int r = 1;
 				// poll Frame Endpoints 0x85 
 				// don't change timeout=100ms !!
 				r = libusb_bulk_transfer(devh, 0x85, buf, sizeof(buf), &actual_length, 100); 
-				if (actual_length > 0)
+				if (actual_length > 0) {
+					// print_bulk_result("0x85", "none", r, actual_length, buf);
 					vframe("0x85",EP85_error, r, actual_length, buf, colormap);
+				}
 				break;      
 		}
 
 		// poll Endpoints 0x81, 0x83
-		r = libusb_bulk_transfer(devh, 0x81, buf, sizeof(buf), &actual_length, 10); 
-		/*
+		r = libusb_bulk_transfer(devh, 0x81, buf, sizeof(buf), &actual_length, 10);
+		if (actual_length > 16) {
+			int i;
+			unsigned int magic, second, len;
+
+			magic=*(unsigned int *)&buf[0];
+			second=*(unsigned int *)&buf[4];
+			len=*(unsigned int *)&buf[8];
+
+			fprintf(stderr, "EP81=%d in %d, magic=0x%08x sec=%08x len=%08x\n", r, actual_length,magic,second,len);
+			if (magic == 0x000001cc) {
+				parse_config_in(&buf[16]);
+			}
+#if 1
+			for (i=0; i<actual_length; i++) {
+				if (buf[i] > 31 && buf[i]<128)
+					fprintf(stderr, "%c", buf[i]);
+				else
+					//fprintf(stderr, ".");
+					fprintf(stderr, "<%02x>", buf[i]);
+			}
+			fprintf(stderr, "\n");
+#endif
+		}
+/*		
 		if (actual_length > 0 && actual_length <= 101) {
 			char k[5];
+			int i;
 			if (strncmp (&buf[32],"VoltageUpdate",13)==0) {
 				printf("xx %d\n",actual_length);
 				char *token, *string, *tofree, *string2;
@@ -636,12 +792,16 @@ int r = 1;
 				// }
 			}
 		}
-		*/
+*/
 
 		r = libusb_bulk_transfer(devh, 0x83, buf, sizeof(buf), &actual_length, 10); 
 		if (strcmp(libusb_error_name(r), "LIBUSB_ERROR_NO_DEVICE")==0) {
 			fprintf(stderr, "EP 0x83 LIBUSB_ERROR_NO_DEVICE -> reset USB\n");
 			goto out;
+		}
+		if (actual_length > 0) {
+			//int i;
+			fprintf(stderr, "EP83 in %d\n", actual_length);
 		}
 		// print_bulk_result("0x83",EP83_error, r, actual_length, buf); 
 	}

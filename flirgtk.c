@@ -25,6 +25,8 @@
 #include <time.h>
 // #include <limits.h>
 
+#include "cam-thread.h"
+
 #include "cairo_jpg/src/cairo_jpg.h"
 
 #include "palettes/15.h"
@@ -60,6 +62,9 @@ unsigned char *color_palette;
 gpointer cam_thread_main(gpointer user_data);
 
 extern double t_min, t_max, t_center;
+extern struct shutter_state_t shutter_state;
+extern struct battery_state_t battery_state;
+
 unsigned char *ir_buffer=NULL;
 unsigned char *jpeg_buffer=NULL;
 unsigned int jpeg_size=0;
@@ -97,27 +102,28 @@ cairo_surface_t
 unsigned int *p1, *pc;
 int x,y;
 static cairo_surface_t *ps=NULL;
-//static unsigned char *cm=NULL;
 cairo_t *cr;
 unsigned char *fbdata;
 char tdisp[16];
 
 #define P_XPOS 175
+#define P_YPOS 2
+#define P_HEIGHT 14
 
 	if (ps==NULL)
 		ps=cairo_image_surface_create(CAIRO_FORMAT_RGB24, 640, 20);
 	cr=cairo_create(ps);
 	fbdata=cairo_image_surface_get_data(ps);
 	memset(fbdata,0,(640*20*4));
-	y=5;
+	y=P_YPOS;
 	for (x=0; x<256; x++) {
 		fbdata[4* y * 640 + ((x+P_XPOS)*4)] = color_palette[3 * x + 2];  // B
 		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+1] = color_palette[3 * x + 1]; // G
 		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+2] = color_palette[3 * x]; // R
 	}
-	y=5;
+	y=P_YPOS;
 	p1 = (unsigned int *)&fbdata[4 * y * 640 + (P_XPOS*4)]; // pointer to start of line
-	for (y=5; y<15; y++) {
+	for (y=P_YPOS; y<(P_YPOS+P_HEIGHT); y++) {
 		pc = (unsigned int *)&fbdata[4 * y * 640 + (P_XPOS*4)]; // pointer to start of copy line
 		memcpy(pc,p1,256*4);
 	}
@@ -257,6 +263,15 @@ cairo_t *cr;
 		cairo_move_to (cr, 330, 220);
 		cairo_show_text (cr, tdisp);
 	
+		// print battery % top right
+		snprintf(tdisp, 16, "%d%%", battery_state.percentage);
+		cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+		cairo_select_font_face (cr, "Sans",
+			CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+		cairo_set_font_size (cr, 14);
+		cairo_move_to (cr, 580, 20);
+		cairo_show_text (cr, tdisp);
+
 		cairo_destroy(cr);
 		pending = FALSE;
 	}
@@ -292,7 +307,7 @@ char fname[30];
 	strftime (fname, 30, "ircam-%y%m%d%H%M%S", loctime);
 	strncpy(pname, "./", PATH_MAX-30-4); // leave room for filename+extension
 	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
-	strncat(pname, ".png", PATH_MAX-1); // -5 to leave space for trailing \0 byte + extension
+	strncat(pname, ".png", PATH_MAX-1); // -1 to leave space for trailing \0 byte
 
 	cairo_surface_write_to_png (psurface, pname);
 	take_vis_shot=TRUE;
@@ -303,6 +318,8 @@ start_clicked(GtkWidget *button, gpointer user_data)
 {
 	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(play_button))) {
 		flir_run = TRUE;
+		memset(&shutter_state, 0, sizeof(shutter_state));
+		memset(&battery_state, 0, sizeof(battery_state));
 		if (ir_buffer == NULL)
 			g_printerr("ir_buffer\n");
 		g_thread_new ("CAM thread", cam_thread_main, NULL);
@@ -339,14 +356,6 @@ close_window (void)
 	gtk_main_quit();
 }
 
-gboolean
-handle_timeout (gpointer user_data)
-{
-	update_fb();
-
-	return TRUE;
-}
-
 void
 palette_changed (GtkComboBox *widget, gpointer user_data)
 {
@@ -381,108 +390,97 @@ GtkWidget *w, *i;
 
 // GtkWidget *da;
 
-	// default color palette
+	// init default color palette
 	color_palette = palette_Rainbow;
 
-	if (!window) {
 //		gappw=gtk_application_window_new(gapp);
-		window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
-		gtk_window_set_title (GTK_WINDOW (window), "FLIR One");
+	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
+	gtk_window_set_title (GTK_WINDOW (window), "FLIR One");
 
-		g_signal_connect (window, "destroy",
-			G_CALLBACK (close_window), NULL); 
+	g_signal_connect (window, "destroy",
+		G_CALLBACK (close_window), NULL); 
 
-		box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-		gtk_container_add (GTK_CONTAINER (window), box);
+	box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+	gtk_container_add (GTK_CONTAINER (window), box);
 
-		hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
-		gtk_container_add (GTK_CONTAINER (box), hbox);
+	hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+	gtk_container_add (GTK_CONTAINER (box), hbox);
 
-		// 48 GTK_ICON_SIZE_DIALOG
-		// 32 GTK_ICON_SIZE_DND
-		// media-playback-start
-		// w = gtk_button_new_with_label("Start");
-		// w = gtk_button_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
-		play_button = gtk_toggle_button_new();
-		i = gtk_image_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
-		gtk_button_set_image(GTK_BUTTON(play_button),i);
-		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(play_button), FALSE);
-		gtk_container_add (GTK_CONTAINER (hbox), play_button);
+	// 48 GTK_ICON_SIZE_DIALOG
+	// 32 GTK_ICON_SIZE_DND
+	// media-playback-start
+	// w = gtk_button_new_with_label("Start");
+	// w = gtk_button_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
+	play_button = gtk_toggle_button_new();
+	i = gtk_image_new_from_icon_name("media-playback-start", GTK_ICON_SIZE_DND);
+	gtk_button_set_image(GTK_BUTTON(play_button),i);
+	gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(play_button), FALSE);
+	gtk_container_add (GTK_CONTAINER (hbox), play_button);
+	g_signal_connect (play_button, "clicked",
+		G_CALLBACK (start_clicked), NULL);
 
-		g_signal_connect (play_button, "clicked",
-			G_CALLBACK (start_clicked), NULL);
+	// media-playback-stop
+	// w = gtk_button_new_with_label("Stop");
+	//w = gtk_button_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
+	stop_button = gtk_toggle_button_new();
+	i = gtk_image_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
+	gtk_button_set_image(GTK_BUTTON(stop_button),i);
+	gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(stop_button), TRUE);
+	gtk_container_add (GTK_CONTAINER (hbox), stop_button);
 
-		// media-playback-stop
-		// w = gtk_button_new_with_label("Stop");
-		//w = gtk_button_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
-		stop_button = gtk_toggle_button_new();
-		i = gtk_image_new_from_icon_name("media-playback-stop", GTK_ICON_SIZE_DND);
-		gtk_button_set_image(GTK_BUTTON(stop_button),i);
-		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(stop_button), TRUE);
-		gtk_container_add (GTK_CONTAINER (hbox), stop_button);
+	g_signal_connect (stop_button, "clicked",
+		G_CALLBACK (stop_clicked), NULL);
 
-		g_signal_connect (stop_button, "clicked",
-			G_CALLBACK (stop_clicked), NULL);
+	// drop down for color palettes
+	w = gtk_combo_box_text_new();
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "7");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "15");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "17");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "85");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "92");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Grayscale");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Grey");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Iron 2");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Iron Black");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Rainbow");
+	gtk_combo_box_set_active (GTK_COMBO_BOX(w), 9);
+	gtk_container_add (GTK_CONTAINER (hbox), w);
+	g_signal_connect (w, "changed",
+		G_CALLBACK (palette_changed), NULL);
 
-		// drop down for color palettes
-		w = gtk_combo_box_text_new();
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "7");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "15");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "17");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "85");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "92");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Grayscale");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Grey");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Iron 2");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Iron Black");
-		gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Rainbow");
-		gtk_combo_box_set_active (GTK_COMBO_BOX(w), 9);
-		gtk_container_add (GTK_CONTAINER (hbox), w);
-		g_signal_connect (w, "changed",
-			G_CALLBACK (palette_changed), NULL);
+	w = gtk_toggle_button_new_with_label("IR");
+	gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(w), TRUE);
+	gtk_container_add (GTK_CONTAINER (hbox), w);
+	g_signal_connect (w, "clicked",
+		G_CALLBACK (ircam_clicked), NULL);
 
-		w = gtk_toggle_button_new_with_label("IR");
-		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(w), TRUE);
-		gtk_container_add (GTK_CONTAINER (hbox), w);
-		g_signal_connect (w, "clicked",
-			G_CALLBACK (ircam_clicked), NULL);
+	w = gtk_toggle_button_new_with_label("Vis");
+	gtk_container_add (GTK_CONTAINER (hbox), w);
+	gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(w), FALSE);
+	g_signal_connect (w, "clicked",
+		G_CALLBACK (viscam_clicked), NULL);
 
-		w = gtk_toggle_button_new_with_label("Vis");
-		gtk_container_add (GTK_CONTAINER (hbox), w);
-		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(w), FALSE);
-		g_signal_connect (w, "clicked",
-			G_CALLBACK (viscam_clicked), NULL);
+	// w = gtk_scale_new_with_range (GTK_ORIENTATION_VERTICAL, 0.0, 1.0, .01);
 
-		w = gtk_scale_new_with_range (GTK_ORIENTATION_VERTICAL,
-                          0.0,
-                          1.0,
-                          .01);
+	psurface = cairo_image_surface_create (CAIRO_FORMAT_RGB24, 640, 500);
 
-		//psurface = cairo_image_surface_create (CAIRO_FORMAT_ARGB32, 640, 500);
-		psurface = cairo_image_surface_create (CAIRO_FORMAT_RGB24, 640, 500);
+	image_darea = gtk_drawing_area_new ();
+	gtk_widget_set_size_request (image_darea, 640, 500);
+	gtk_container_add (GTK_CONTAINER (box), image_darea);
 
-		image_darea = gtk_drawing_area_new ();
-		/* set a minimum size */
-		gtk_widget_set_size_request (image_darea, 640, 500);
+	g_signal_connect (image_darea, "draw",
+		G_CALLBACK (draw_event), NULL);
+//	g_signal_connect (image_darea,"configure-event",
+//		G_CALLBACK (configure_event), NULL);
 
-		gtk_container_add (GTK_CONTAINER (box), image_darea);
+	// camera-photo
+	w = gtk_button_new_from_icon_name("camera-photo", GTK_ICON_SIZE_DND);
+	gtk_container_add (GTK_CONTAINER (box), w);
 
-		g_signal_connect (image_darea, "draw",
-			G_CALLBACK (draw_event), NULL);
-		g_signal_connect (image_darea,"configure-event",
-			G_CALLBACK (configure_event), NULL);
+	g_signal_connect (w, "clicked",
+		G_CALLBACK (store_shot_clicked), NULL);
 
-		// camera-photo
-		w = gtk_button_new_from_icon_name("camera-photo", GTK_ICON_SIZE_DND);
-		gtk_container_add (GTK_CONTAINER (box), w);
-
-		g_signal_connect (w, "clicked",
-			G_CALLBACK (store_shot_clicked), NULL);
-
-		// g_timeout_add_seconds(1, handle_timeout, NULL);
-
-		gtk_widget_show_all(window);
-	}
+	gtk_widget_show_all(window);
 
 	return window;
 }

@@ -28,3 +28,131 @@ unsigned char *     cairo_image_surface_get_data        (cairo_surface_t *surfac
 get pointer to imag data for inspection _and_ manipulation
 
 
+
+
+
+
+All messages are preceded by a header.
+All headers are comprised of 32-bit words in little-endian order.
+Headers of config endpoints have 4 words, those of file endpoints have 6 words, and those of frame endpoints are 7 words.
+The first word is always the magic number (0x1cc for config, 0x5510 for file, 0xbeef for frame).
+The second word appears to be always one. I'm still not sure about its meaning.
+The third word is always the payload (message) size in bytes.
+The last word is always the CRC-32 of all but the last word of header with the following parameters (this is the conventional CRC-32):
+Polynomial: 0x04C11DB7,  Init: 0xFFFFFFFF,  Reflect Input: true,  Reflect Output: true,  XOR Output: 0xFFFFFFFF
+
+For file headers:
+The fourth word is the stream identifier.
+The fifth word is the conventional CRC-32 of the file itself.
+
+For frame headers:
+The fourth word is the size of thermal image.
+The fifth word is the size of visual (jpeg) image.
+The sixth word is the size of status string.
+
+After issuing a command to the config endpoint, you can query it for a response.
+For commands of type 'setOption', the response is of type 'setOptionStatus' and indicates the new value of the option (-1 if the option does not exist).
+For commands of type 'openFile', the response is of type 'openFileStatus' and indicates the stream identifier of the opened file. The stream identifier is essentially the return value of the fopen function. Negative values indicate different error codes. Non-negative values could be used by a readFile command to read the opened file.
+Analysis of the sdk binary reveals that there are also 'reboot' and 'upgradeFirmware' commands with corresponding responses 'rebootStatus' and 'upgradeFirmwareStatus'. But I haven't worked out the required arguments for these commands.
+
+
+Meta data comes as JSON structures:
+
+EP81
+----
+
+{
+	"type":"sledInformation",
+	"data":
+	{
+		"serialNumberBoard":"F07H8J0055D",
+		"partNumberBoard":"invalid",
+		"versionBoard":"invalid",
+		"serialNumberLepton":"2171207",
+		"versionLepton":"3.3.26",
+		"leptonQR":"invalid",
+		"versionRosebudFactoryESW":"1.0.25",
+		"versionRosebudOperationalESW":"1.0.27",
+		"versionRosebudUpdaterESW":"1.0.25",
+		"versionRosebudAPI":"master.bc654fc",
+		"gitRevision":"master.bc654fc",
+		"automaticShutter":"Y",
+		"formFactor":"dongle",
+		"thermalHeight":"120",
+		"thermalWidth":"160",
+		"bigEndianThermal":"0",
+		"operatingMode":"operational"
+	}
+}
+
+{
+	"type":"batteryVoltageUpdate",
+	"data":
+	{
+		"voltage":3.90000009536743,
+		"percentage":77
+	}
+}
+
+{
+	"type":"batteryChargingCurrentUpdate",
+	"data":
+	{
+		"chargingCurrent":0
+	}
+}
+
+{
+	"type":"batteryChargingStateUpdate",
+	"data":
+	{
+		"chargingState":"stateNoCharging"
+	}
+}
+{
+	"type":"batteryChargingStateUpdate",
+	"data":
+	{
+		"chargingState":"stateChargingSmartPhone"
+	}
+}
+
+
+EP81=0 in 101
+<cc><01><00><00><01><00><00><00>U<00><00><00>0s<8c><df>{"type":"batteryVoltageUpdate","data":{"voltage":4.11999988555908,"percentage":100}}<00>
+EP81=0 in 100
+<cc><01><00><00><01><00><00><00>T<00><00><00>U<14>0g{"type":"batteryVoltageUpdate","data":{"voltage":4.1100001335144,"percentage":100}}<00>
+EP81=0 in 101
+<cc><01><00><00><01><00><00><00>U<00><00><00>0s<8c><df>{"type":"batteryVoltageUpdate","data":{"voltage":4.11999988555908,"percentage":100}}<00>
+EP81=0 in 100
+<cc><01><00><00><01><00><00><00>T<00><00><00>U<14>0g{"type":"batteryVoltageUpdate","data":{"voltage":4.1100001335144,"percentage":100}}<00>
+EP81=0 in 101
+<cc><01><00><00><01><00><00><00>U<00><00><00>0s<8c><df>{"type":"batteryVoltageUpdate","data":{"voltage":4.11999988555908,"percentage":100}}<00>
+EP81=0 in 100
+<cc><01><00><00><01><00><00><00>T<00><00><00>U<14>0g{"type":"batteryVoltageUpdate","data":{"voltage":4.1100001335144,"percentage":100}}<00>
+EP81=0 in 101
+<cc><01><00><00><01><00><00><00>U<00><00><00>0s<8c><df>{"type":"batteryVoltageUpdate","data":{"voltage":4.11999988555908,"percentage":100}}<00>
+
+There can be more than one message in one EP transfer:
+EP81=0 in 294, magic=0x000001cc sec=00000001 len=00000055
+<cc><01><00><00><01><00><00><00>U<00><00><00>0s<8c><df>{"type":"batteryVoltageUpdate","data":{"voltage":4.13000011444092,"percentage":100}}<00><cc><01><00><00><01><00><00><00>H<00><00><00>r<fc><ff>}{"type":"batteryChargingCurrentUpdate","data":{"chargingCurrent":1000}}<00><cc><01><00><00><01><00><00><00>Y<00><00><00><88><cc>Z<95>{"type":"batteryChargingStateUpdate","data":{"chargingState":"stateChargingSmartPhone"}}<00>
+
+
+
+EP85
+----
+{
+	"shutterState":"FFC",
+	"shutterTemperature":309.239990234375,
+	"usbNotifiedTimestamp":1184541462.87291,
+	"usbEnqueuedTimestamp":1184541462.87494,
+	"ffcState":"FFC_PROGRESS"
+}
+
+{
+	"shutterState":"ON",
+	"shutterTemperature":310.679992675781,
+	"usbNotifiedTimestamp":1184542349.84666,
+	"usbEnqueuedTimestamp":1184542349.85135,
+	"ffcState":"FFC_VALID_RAD"
+}
