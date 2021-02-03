@@ -1,7 +1,7 @@
 #ifndef _CAM_THREAD_H
 #define _CAM_THREAD_H
 
-enum ffcstate_t {FFC_VALID_RAD, FFC_PROGRESS, FFC_UNKNOWN};
+enum ffcstate_t {FFC_VALID_RAD, FFC_RAD_APPRO, FFC_PROGRESS, FFC_UNKNOWN};
 enum shutterstate_t {sON, sFFC, sUNKNOWN};
 
 // {

@@ -48,8 +48,21 @@ static GtkWidget *image_darea = NULL;
 static GtkWidget *play_button, *stop_button;
  // we paint everything in here and then into the drawing area widget
 static cairo_surface_t *psurface;
-static double vis_surface_alpha=0.3;
 static gboolean take_vis_shot=FALSE;
+
+// settings
+int colorpalette=9;
+double emissivity=0.9;
+double tempreflected=20.0;
+
+static gboolean show_battery=TRUE;
+static gboolean show_palette=TRUE;
+static gboolean show_crosshair=TRUE;
+
+static double vis_surface_alpha=0.3;
+static double vis_surface_scaling=(1./2.25);
+static double vis_x_offset=0.;
+static double vis_y_offset=0.;
 
 
 // variables to communicate with cam thread
@@ -68,7 +81,6 @@ extern struct battery_state_t battery_state;
 unsigned char *ir_buffer=NULL;
 unsigned char *jpeg_buffer=NULL;
 unsigned int jpeg_size=0;
-
 
 
 static gboolean
@@ -157,13 +169,19 @@ store_vis_shot(unsigned char *jpg_buffer, unsigned int jpg_size)
 time_t now;
 struct tm *loctime;
 char pname[PATH_MAX];
+const char *tmp;
 char fname[30];
 int fd;
 
 	now = time(NULL);
 	loctime = localtime (&now);
 	strftime (fname, 30, "viscam-%y%m%d%H%M%S", loctime);
-	strncpy(pname, "./", PATH_MAX-30-4); // leave room for filename+extension
+
+	tmp=g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
+	if (tmp == NULL)
+		tmp = "./";
+	strncpy(pname, tmp, PATH_MAX-30-4); // leave room for filename+extension
+	strncat(pname, "/", PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
 	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
 	strncat(pname, ".jpg", PATH_MAX-1); // -5 to leave space for trailing \0 byte + extension
 
@@ -213,8 +231,8 @@ cairo_t *cr;
 			if (viscam) {
 				jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
 				cairo_save(cr);
-				cairo_scale (cr, (1./2.25), (1./2.25));
-				cairo_set_source_surface (cr, jpeg_surface, 0, 0);
+				cairo_scale (cr, vis_surface_scaling, vis_surface_scaling);
+				cairo_set_source_surface (cr, jpeg_surface, vis_x_offset, vis_y_offset);
 				if (ircam)
 					cairo_paint_with_alpha (cr, vis_surface_alpha);
 				else
@@ -228,6 +246,7 @@ cairo_t *cr;
 
 		// then draw decoration on top
 		// the color palette with min/max temperatures
+	if (show_palette) {
 		palette_surface=draw_palette();
 		cairo_save(cr);
 		cairo_rectangle(cr,0,481,640,500);
@@ -235,7 +254,9 @@ cairo_t *cr;
 		cairo_set_source_surface (cr, palette_surface, 0, 481);
 		cairo_paint (cr);
 		cairo_restore(cr);
-	
+	}
+
+	if (show_crosshair) {
 		// crosshair in the center
 		cairo_set_line_width (cr, 3);
 		cairo_set_source_rgb (cr, 0, 0, 0);
@@ -262,16 +283,18 @@ cairo_t *cr;
 		cairo_set_font_size (cr, 24);
 		cairo_move_to (cr, 330, 220);
 		cairo_show_text (cr, tdisp);
-	
-		// print battery % top right
-		snprintf(tdisp, 16, "%d%%", battery_state.percentage);
-		cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
-		cairo_select_font_face (cr, "Sans",
-			CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-		cairo_set_font_size (cr, 14);
-		cairo_move_to (cr, 580, 20);
-		cairo_show_text (cr, tdisp);
+	}
 
+		// print battery % top right
+		if (show_battery) {
+			snprintf(tdisp, 16, "%d%%", battery_state.percentage);
+			cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
+			cairo_select_font_face (cr, "Sans",
+				CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+			cairo_set_font_size (cr, 14);
+			cairo_move_to (cr, 580, 20);
+			cairo_show_text (cr, tdisp);
+		}
 		cairo_destroy(cr);
 		pending = FALSE;
 	}
@@ -301,11 +324,17 @@ time_t now;
 struct tm *loctime;
 char pname[PATH_MAX];
 char fname[30];
+const char *tmp;
 
 	now = time(NULL);
 	loctime = localtime (&now);
 	strftime (fname, 30, "ircam-%y%m%d%H%M%S", loctime);
-	strncpy(pname, "./", PATH_MAX-30-4); // leave room for filename+extension
+
+	tmp=g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
+	if (tmp == NULL)
+		tmp = "./";
+	strncpy(pname, tmp, PATH_MAX-30-4); // leave room for filename+extension
+	strncat(pname, "/", PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
 	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
 	strncat(pname, ".png", PATH_MAX-1); // -1 to leave space for trailing \0 byte
 
@@ -348,6 +377,12 @@ viscam_clicked(GtkWidget *button, gpointer user_data)
 	viscam = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(button));
 }
 
+void
+menu_clicked(GtkWidget *button, gpointer user_data)
+{
+
+}
+
 static void
 close_window (void)
 {
@@ -375,10 +410,247 @@ int act;
 		if (act == 7) color_palette = palette_Iron2;
 		if (act == 8) color_palette = palette_Iron_Black;
 		if (act == 9) color_palette = palette_Rainbow;
-		// draw_palette();
+		colorpalette=act;
 	};
 }
 
+void
+emissivity_changed (GtkRange *range, gpointer user_data)
+{
+	emissivity=gtk_range_get_value (range);
+}
+
+void
+tempreflected_changed (GtkSpinButton *spin_button, gpointer user_data)
+{
+	tempreflected=gtk_spin_button_get_value (spin_button);
+}
+
+void
+ir_settings_activate(GtkMenuItem *menuitem, gpointer user_data)
+{
+GtkWidget *dialog, *hb, *c, *vb, *w;
+GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DIALOG_DESTROY_WITH_PARENT;
+
+	dialog = gtk_dialog_new_with_buttons ("IR Settings",
+                                      GTK_WINDOW(window),
+                                      flags,
+                                      "_OK",
+                                      GTK_RESPONSE_ACCEPT,
+                                      NULL);
+	gtk_widget_set_size_request(dialog, 400, 200);
+	hb=gtk_dialog_get_header_bar (GTK_DIALOG(dialog));
+	gtk_header_bar_set_decoration_layout (GTK_HEADER_BAR(hb), ":");
+
+	c=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+	vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+	gtk_container_add (GTK_CONTAINER (c), vb);
+
+	w=gtk_label_new("Color Palette");
+	gtk_container_add (GTK_CONTAINER (vb), w);
+
+	// drop down for color palettes
+	w = gtk_combo_box_text_new();
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "7");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "15");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "17");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "85");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "92");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Grayscale");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Grey");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Iron 2");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Iron Black");
+	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "Rainbow");
+	gtk_combo_box_set_active (GTK_COMBO_BOX(w), colorpalette);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "changed",
+		G_CALLBACK (palette_changed), NULL);
+
+	w=gtk_label_new("Emissivity");
+	gtk_container_add (GTK_CONTAINER (vb), w);
+
+	w=gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
+                          0.0,
+                          1.0,
+                          0.01);
+	gtk_scale_add_mark (GTK_SCALE(w), 0.30, GTK_POS_TOP, "shiny");
+	gtk_scale_add_mark (GTK_SCALE(w), 0.60, GTK_POS_BOTTOM, "half shiny");
+	gtk_scale_add_mark (GTK_SCALE(w), 0.80, GTK_POS_TOP, "half matte");
+	gtk_scale_add_mark (GTK_SCALE(w), 0.90, GTK_POS_BOTTOM, "matte");
+	gtk_range_set_value(GTK_RANGE(w), emissivity);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "value-changed",
+		G_CALLBACK (emissivity_changed), NULL);
+
+	w=gtk_label_new("Reflected Temperature");
+	gtk_container_add (GTK_CONTAINER (vb), w);
+
+	w=gtk_spin_button_new_with_range(-100.0, +100.0, 0.5);
+	gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), tempreflected);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "value-changed",
+		G_CALLBACK (tempreflected_changed), NULL);
+
+	gtk_widget_show_all(c);
+	gtk_dialog_run(GTK_DIALOG(dialog));
+	gtk_widget_destroy(dialog);
+}
+
+
+void
+show_battery_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+{
+	show_battery=gtk_toggle_button_get_active(togglebutton);
+}
+
+void
+show_palette_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+{
+	show_palette=gtk_toggle_button_get_active(togglebutton);
+}
+
+void
+show_crosshair_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+{
+	show_crosshair=gtk_toggle_button_get_active(togglebutton);
+}
+
+void
+ui_settings_activate(GtkMenuItem *menuitem, gpointer user_data)
+{
+GtkWidget *dialog, *hb, *c, *vb, *w;
+GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DIALOG_DESTROY_WITH_PARENT;
+
+	dialog = gtk_dialog_new_with_buttons ("UI Settings",
+                                      GTK_WINDOW(window),
+                                      flags,
+                                      "_OK",
+                                      GTK_RESPONSE_ACCEPT,
+                                      NULL);
+	gtk_widget_set_size_request(dialog, 400, 200);
+	hb=gtk_dialog_get_header_bar (GTK_DIALOG(dialog));
+	gtk_header_bar_set_decoration_layout (GTK_HEADER_BAR(hb), ":");
+
+	c=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+	vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+	gtk_container_add (GTK_CONTAINER (c), vb);
+
+	w=gtk_check_button_new_with_label ("Show battery");
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w), show_battery);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "toggled",
+		G_CALLBACK (show_battery_toggled), NULL);
+	
+	w=gtk_check_button_new_with_label ("Show crosshair");
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w), show_crosshair);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "toggled",
+		G_CALLBACK (show_crosshair_toggled), NULL);
+	
+	w=gtk_check_button_new_with_label ("Show palette");
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w), show_palette);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "toggled",
+		G_CALLBACK (show_palette_toggled), NULL);
+	
+	gtk_widget_show_all(c);
+	gtk_dialog_run(GTK_DIALOG(dialog));
+	gtk_widget_destroy(dialog);
+}
+
+
+void
+vis_opacity_changed (GtkRange *range, gpointer user_data)
+{
+	vis_surface_alpha=gtk_range_get_value (range);
+}
+
+void
+vis_scaling_changed (GtkRange *range, gpointer user_data)
+{
+	vis_surface_scaling=gtk_range_get_value (range);
+}
+
+void
+vis_x_offset_changed (GtkSpinButton *spin_button, gpointer user_data)
+{
+	vis_x_offset=gtk_spin_button_get_value (spin_button);
+}
+
+void
+vis_y_offset_changed (GtkSpinButton *spin_button, gpointer user_data)
+{
+	vis_y_offset=gtk_spin_button_get_value (spin_button);
+}
+
+void
+vis_settings_activate(GtkMenuItem *menuitem, gpointer user_data)
+{
+GtkWidget *dialog, *hb, *c, *vb, *w;
+GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DIALOG_DESTROY_WITH_PARENT;
+
+	dialog = gtk_dialog_new_with_buttons ("Vis Settings",
+                                      GTK_WINDOW(window),
+                                      flags,
+                                      "_OK",
+                                      GTK_RESPONSE_ACCEPT,
+                                      NULL);
+	gtk_widget_set_size_request(dialog, 400, 200);
+	hb=gtk_dialog_get_header_bar (GTK_DIALOG(dialog));
+	gtk_header_bar_set_decoration_layout (GTK_HEADER_BAR(hb), ":");
+
+	c=gtk_dialog_get_content_area(GTK_DIALOG(dialog));
+	vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+	gtk_container_add (GTK_CONTAINER (c), vb);
+
+	w=gtk_label_new("Opacity");
+	gtk_container_add (GTK_CONTAINER (vb), w);
+
+	w=gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
+                          0.0,
+                          1.0,
+                          0.01);
+	gtk_range_set_value(GTK_RANGE(w), vis_surface_alpha);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "value-changed",
+		G_CALLBACK (vis_opacity_changed), NULL);
+
+	w=gtk_label_new("Scaling");
+	gtk_container_add (GTK_CONTAINER (vb), w);
+
+	w=gtk_scale_new_with_range (GTK_ORIENTATION_HORIZONTAL,
+                          0.2,
+                          1.0,
+                          0.01);
+	gtk_range_set_value(GTK_RANGE(w), vis_surface_scaling);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "value-changed",
+		G_CALLBACK (vis_scaling_changed), NULL);
+
+	w=gtk_label_new("X Offset");
+	gtk_container_add (GTK_CONTAINER (vb), w);
+
+	w=gtk_spin_button_new_with_range(-100.0, +100.0, 1.);
+	gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), vis_x_offset);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "value-changed",
+		G_CALLBACK (vis_x_offset_changed), NULL);
+
+	w=gtk_label_new("Y Offset");
+	gtk_container_add (GTK_CONTAINER (vb), w);
+
+	w=gtk_spin_button_new_with_range(-100.0, +100.0, 1.);
+	gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), vis_y_offset);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "value-changed",
+		G_CALLBACK (vis_y_offset_changed), NULL);
+
+
+
+	gtk_widget_show_all(c);
+	gtk_dialog_run(GTK_DIALOG(dialog));
+	gtk_widget_destroy(dialog);
+}
 
 GtkWidget *
 create_main_window (void)
@@ -387,6 +659,7 @@ create_main_window (void)
 GtkWidget *box;
 GtkWidget *hbox;
 GtkWidget *w, *i;
+GtkWidget *m, *mi;
 
 // GtkWidget *da;
 
@@ -396,6 +669,38 @@ GtkWidget *w, *i;
 //		gappw=gtk_application_window_new(gapp);
 	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	gtk_window_set_title (GTK_WINDOW (window), "FLIR One");
+	w=gtk_header_bar_new();
+	gtk_header_bar_set_show_close_button (GTK_HEADER_BAR(w), TRUE);
+	gtk_header_bar_set_decoration_layout (GTK_HEADER_BAR(w), ":menu,close");
+//	i = gtk_button_new_from_icon_name("open-menu-symbolic", GTK_ICON_SIZE_BUTTON);
+	i=gtk_menu_button_new();
+
+	m=gtk_menu_new();
+	mi=gtk_menu_item_new_with_label("UI Settings");
+	gtk_menu_shell_append(GTK_MENU_SHELL(m), mi);
+	g_signal_connect (mi, "activate",
+		G_CALLBACK (ui_settings_activate), NULL);
+	mi=gtk_menu_item_new_with_label("IR Settings");
+	gtk_menu_shell_append(GTK_MENU_SHELL(m), mi);
+	g_signal_connect (mi, "activate",
+		G_CALLBACK (ir_settings_activate), NULL);
+	mi=gtk_menu_item_new_with_label("Vis Settings");
+	gtk_menu_shell_append(GTK_MENU_SHELL(m), mi);
+	g_signal_connect (mi, "activate",
+		G_CALLBACK (vis_settings_activate), NULL);
+	mi=gtk_separator_menu_item_new ();
+	gtk_menu_shell_append(GTK_MENU_SHELL(m), mi);
+	mi=gtk_menu_item_new_with_label("Quit");
+	gtk_menu_shell_append(GTK_MENU_SHELL(m), mi);
+	g_signal_connect (mi, "activate",
+		G_CALLBACK (gtk_main_quit), NULL);
+	gtk_menu_button_set_use_popover(GTK_MENU_BUTTON(i), TRUE);
+	gtk_menu_button_set_popup (GTK_MENU_BUTTON(i), m);
+	gtk_widget_show_all(m);
+	gtk_header_bar_pack_end(GTK_HEADER_BAR(w),i);
+	gtk_window_set_titlebar(GTK_WINDOW (window), w);
+//	g_signal_connect (w, "clicked",
+//		G_CALLBACK (menu_clicked), NULL);
 
 	g_signal_connect (window, "destroy",
 		G_CALLBACK (close_window), NULL); 
@@ -432,6 +737,7 @@ GtkWidget *w, *i;
 		G_CALLBACK (stop_clicked), NULL);
 
 	// drop down for color palettes
+#if 0
 	w = gtk_combo_box_text_new();
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "7");
 	gtk_combo_box_text_append (GTK_COMBO_BOX_TEXT(w), NULL, "15");
@@ -447,6 +753,7 @@ GtkWidget *w, *i;
 	gtk_container_add (GTK_CONTAINER (hbox), w);
 	g_signal_connect (w, "changed",
 		G_CALLBACK (palette_changed), NULL);
+#endif
 
 	w = gtk_toggle_button_new_with_label("IR");
 	gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(w), TRUE);

@@ -72,6 +72,9 @@ unsigned char buf85[BUF85SIZE];
 extern unsigned char *jpeg_buffer;
 extern unsigned int jpeg_size;
 extern unsigned char *ir_buffer;
+extern double emissivity;
+extern double tempreflected;
+
 
 struct shutter_state_t shutter_state;
 struct battery_state_t battery_state;
@@ -199,9 +202,9 @@ raw2temperature(unsigned short RAW)
 	// mystery correction factor
 	RAW *=4;
 	// calc amount of radiance of reflected objects ( Emissivity < 1 )
-	double RAWrefl=PlanckR1/(PlanckR2*(exp(PlanckB/(TempReflected+273.15))-PlanckF))-PlanckO;
+	double RAWrefl=PlanckR1/(PlanckR2*(exp(PlanckB/(tempreflected/*TempReflected*/+273.15))-PlanckF))-PlanckO;
 	// get displayed object temp max/min
-	double RAWobj=(RAW-(1-Emissivity)*RAWrefl)/Emissivity;
+	double RAWobj=(RAW-(1-emissivity/*Emissivity*/)*RAWrefl)/emissivity/*Emissivity*/;
 	// calc object temperature
 
 	return PlanckB/log(PlanckR1/(PlanckR2*(RAWobj+PlanckO))+PlanckF)-273.15;  
@@ -750,7 +753,7 @@ int r = 1;
 			if (magic == 0x000001cc) {
 				parse_config_in(&buf[16]);
 			}
-#if 1
+#if 0
 			for (i=0; i<actual_length; i++) {
 				if (buf[i] > 31 && buf[i]<128)
 					fprintf(stderr, "%c", buf[i]);
