@@ -1,0 +1,4 @@
+# reload udev rules
+pkg_postinst_${PN}-udevreload () {
+	udevadm control --reload-rules
+}

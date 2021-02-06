@@ -14,6 +14,7 @@ $(PRG): $(OBJ) cam-thread.h planck.h
 
 install:
 	install -D $(PRG) $(DESTDIR)$(prefix)/bin/$(PRG)
+	install -D 77-flirone-lusb.rules $(DESTDIR)/lib/udev/rules.d/77-flirone-lusb.rules
 
 clean:
 	rm -f $(PRG) $(OBJ)
