@@ -1,3 +1,5 @@
+prefix=/usr/local
+
 CC=gcc
 CFLAGS=-g -O2 -Wall -D_REENTRANT `pkg-config --cflags gtk+-3.0 libusb-1.0 libjpeg libcjson`
 LIBS=`pkg-config --libs gtk+-3.0 libusb-1.0 libjpeg libcjson` -lm
@@ -7,8 +9,14 @@ PRG=flirgtk
 
 all: $(PRG)
 
-$(PRG): $(OBJ)
+$(PRG): $(OBJ) cam-thread.h planck.h
 	$(CC) $(OBJ) -o $(PRG) $(LIBS)
 
+install:
+	install -D $(PRG) $(DESTDIR)$(prefix)/bin/$(PRG)
+
 clean:
-	rm $(OBJ)
+	rm -f $(PRG) $(OBJ)
+
+deb:
+	dpkg-buildpackage -rfakeroot -b -uc -us -ui -i -i

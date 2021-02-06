@@ -1,0 +1,16 @@
+Source: flirgtk
+Maintainer: Nicole Faerber <nicole.faerber@dpin.de>
+Section: misc
+Priority: optional
+Standards-Version: 3.9.2
+Build-Depends:
+ libgtk-3-dev,
+ libjpeg-dev,
+ libusb-1.0-0-dev,
+ libcjson-dev
+
+Package: flirgtk
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: View and control FLIR One USB thermal camera
+ View and take picture with the FLIR One USB thermal IR camaras.
