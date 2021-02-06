@@ -18,6 +18,12 @@ install:
 
 clean:
 	rm -f $(PRG) $(OBJ)
+	rm -rf debian/.debhelper
+	rm -f debian/files
+	rm -rf debian/flirgtk
+	rm -f debian/debhelper-build-stamp
+	rm -f debian/flirgtk.debhelper.log
+	rm -f debian/flirgtk.substvars
 
 deb:
 	dpkg-buildpackage -rfakeroot -b -uc -us -ui -i -i
