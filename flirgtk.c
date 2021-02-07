@@ -51,13 +51,13 @@ static cairo_surface_t *psurface;
 static gboolean take_vis_shot=FALSE;
 
 // settings
-int colorpalette=9;
-double emissivity=0.9;
-double tempreflected=20.0;
+static int colorpalette=9;
 
 static gboolean show_battery=TRUE;
 static gboolean show_palette=TRUE;
 static gboolean show_crosshair=TRUE;
+static gboolean shot_store_visual=FALSE;
+static gboolean shot_store_ir_raw=FALSE;
 
 static double vis_surface_alpha=0.3;
 static double vis_surface_scaling=(1./2.25);
@@ -69,24 +69,18 @@ static double vis_y_offset=0.;
 gboolean pending=FALSE;
 gboolean ircam=TRUE;
 gboolean viscam=FALSE;
-gboolean flir_run = FALSE;
-unsigned char *color_palette;
+//gboolean flir_run = FALSE;
+//unsigned char *color_palette;
 
 gpointer cam_thread_main(gpointer user_data);
 
-extern double t_min, t_max, t_center;
-extern struct shutter_state_t shutter_state;
-extern struct battery_state_t battery_state;
+// data structure shared with camera thread
+static struct t_data_t tdata;
 
-unsigned char *ir_buffer=NULL;
-unsigned char *jpeg_buffer=NULL;
-unsigned int jpeg_size=0;
 
 
 gboolean
-configure_event (GtkWidget         *widget,
-                          GdkEventConfigure *event,
-                          gpointer           data)
+configure_event (GtkWidget *widget, GdkEventConfigure *event, gpointer data)
 {
 //GtkAllocation allocation;
 
@@ -119,9 +113,9 @@ char tdisp[16];
 	memset(fbdata,0,(640*20*4));
 	y=P_YPOS;
 	for (x=0; x<256; x++) {
-		fbdata[4* y * 640 + ((x+P_XPOS)*4)] = color_palette[3 * x + 2];  // B
-		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+1] = color_palette[3 * x + 1]; // G
-		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+2] = color_palette[3 * x]; // R
+		fbdata[4* y * 640 + ((x+P_XPOS)*4)] = tdata.color_palette[3 * x + 2];  // B
+		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+1] = tdata.color_palette[3 * x + 1]; // G
+		fbdata[(4* y * 640 + ((x+P_XPOS)*4))+2] = tdata.color_palette[3 * x]; // R
 	}
 	y=P_YPOS;
 	p1 = (unsigned int *)&fbdata[4 * y * 640 + (P_XPOS*4)]; // pointer to start of line
@@ -131,7 +125,7 @@ char tdisp[16];
 	}
 
 	// update palette scale temperature range
-	snprintf(tdisp, 16, "%.1f°C", t_min);
+	snprintf(tdisp, 16, "%.1f°C", tdata.t_min);
 	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
 	cairo_select_font_face (cr, "Sans",
 		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
@@ -139,7 +133,7 @@ char tdisp[16];
 	cairo_move_to (cr, 102, 16);
 	cairo_show_text (cr, tdisp);
 
-	snprintf(tdisp, 16, "%.1f°C", t_max);
+	snprintf(tdisp, 16, "%.1f°C", tdata.t_max);
 	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
 	cairo_select_font_face (cr, "Sans",
 		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
@@ -183,6 +177,40 @@ int fd;
 }
 
 
+void
+store_raw_ir_shot(void)
+{
+time_t now;
+struct tm *loctime;
+char pname[PATH_MAX];
+const char *tmp;
+char fname[30];
+int fd;
+
+	if (tdata.raw_ir_buffer == NULL) {
+		g_printerr("raw IR buffer == NULL\n");
+		return;
+	}
+	now = time(NULL);
+	loctime = localtime (&now);
+	strftime (fname, 30, "ir-%y%m%d%H%M%S", loctime);
+
+	tmp=g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
+	if (tmp == NULL)
+		tmp = "./";
+	strncpy(pname, tmp, PATH_MAX-30-4); // leave room for filename+extension
+	strncat(pname, "/", PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
+	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
+	strncat(pname, ".raw", PATH_MAX-1); // -5 to leave space for trailing \0 byte + extension
+
+	fd=open(pname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+	if (fd>=0) {
+		write (fd, (unsigned char *)tdata.raw_ir_buffer, 160*120*2);
+		close(fd);
+	}
+}
+
+
 static gboolean
 draw_event (GtkWidget *widget,
                cairo_t   *wcr,
@@ -200,8 +228,8 @@ cairo_t *cr;
 		cairo_set_operator (cr, CAIRO_OPERATOR_SOURCE);
 
 		// first draw the frame buffer containing the IR frame
-		if (ircam && ir_buffer!=NULL) {
-			ir_surface=cairo_image_surface_create_for_data (ir_buffer,
+		if (ircam && tdata.ir_buffer!=NULL) {
+			ir_surface=cairo_image_surface_create_for_data (tdata.ir_buffer,
 	                                     CAIRO_FORMAT_RGB24,
 	                                     160,
 	                                     120,
@@ -214,13 +242,13 @@ cairo_t *cr;
 				cairo_surface_destroy (ir_surface);
 		}
 
-		if (jpeg_size != 0 && jpeg_buffer != NULL) {
+		if (tdata.jpeg_size != 0 && tdata.jpeg_buffer != NULL) {
 			if (take_vis_shot) {
 				take_vis_shot=FALSE;
-				store_vis_shot(jpeg_buffer, jpeg_size);
+				store_vis_shot(tdata.jpeg_buffer, tdata.jpeg_size);
 			}
 			if (viscam) {
-				jpeg_surface=cairo_image_surface_create_from_jpeg_mem(jpeg_buffer, jpeg_size);
+				jpeg_surface=cairo_image_surface_create_from_jpeg_mem(tdata.jpeg_buffer, tdata.jpeg_size);
 				cairo_save(cr);
 				cairo_scale (cr, vis_surface_scaling, vis_surface_scaling);
 				cairo_set_source_surface (cr, jpeg_surface, vis_x_offset, vis_y_offset);
@@ -231,8 +259,8 @@ cairo_t *cr;
 				cairo_restore(cr);
 				cairo_surface_destroy (jpeg_surface);
 			}
-			jpeg_size=0;
-			jpeg_buffer=NULL;
+			tdata.jpeg_size=0;
+			tdata.jpeg_buffer=NULL;
 		}
 
 		// then draw decoration on top
@@ -267,7 +295,7 @@ cairo_t *cr;
 			cairo_stroke (cr);
 	
 			// print center temperature near crosshair
-			snprintf(tdisp, 16, "%.1f°C", t_center);
+			snprintf(tdisp, 16, "%.1f°C", tdata.t_center);
 			cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
 			cairo_select_font_face (cr, "Sans",
 				CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
@@ -278,7 +306,7 @@ cairo_t *cr;
 
 		// print battery % top right
 		if (show_battery) {
-			snprintf(tdisp, 16, "%d%%", battery_state.percentage);
+			snprintf(tdisp, 16, "%d%%", tdata.battery_state.percentage);
 			cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
 			cairo_select_font_face (cr, "Sans",
 				CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
@@ -328,21 +356,25 @@ const char *tmp;
 	strncat(pname, "/", PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
 	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
 	strncat(pname, ".png", PATH_MAX-1); // -1 to leave space for trailing \0 byte
-
 	cairo_surface_write_to_png (psurface, pname);
-	take_vis_shot=TRUE;
+
+	if (shot_store_ir_raw)
+		store_raw_ir_shot();
+
+	if (shot_store_visual)
+		take_vis_shot=TRUE;
 }
 
 void
 start_clicked(GtkWidget *button, gpointer user_data)
 {
 	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(play_button))) {
-		flir_run = TRUE;
-		memset(&shutter_state, 0, sizeof(shutter_state));
-		memset(&battery_state, 0, sizeof(battery_state));
-		if (ir_buffer == NULL)
+		tdata.flir_run = TRUE;
+		memset(&tdata.shutter_state, 0, sizeof(tdata.shutter_state));
+		memset(&tdata.battery_state, 0, sizeof(tdata.battery_state));
+		if (tdata.ir_buffer == NULL)
 			g_printerr("ir_buffer\n");
-		g_thread_new ("CAM thread", cam_thread_main, NULL);
+		g_thread_new ("CAM thread", cam_thread_main, &tdata);
 		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(stop_button), FALSE);
 	}
 }
@@ -351,7 +383,7 @@ void
 stop_clicked(GtkWidget *button, gpointer user_data)
 {
 	if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(stop_button))) {
-		flir_run = FALSE;
+		tdata.flir_run = FALSE;
 		gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON(play_button), FALSE);
 	}
 }
@@ -378,8 +410,6 @@ static void
 close_window (void)
 {
 	// clean up and quit
-	//window = NULL;
-	// gtk_main_quit();
 	// g_application_quit(gapp);
 	gtk_application_remove_window(gapp, GTK_WINDOW(window));
 }
@@ -393,16 +423,16 @@ int act;
 	if (act < 0) {
 		g_printerr("oops, palette selection = %d\n", act);
 	} else {
-		if (act == 0) color_palette = palette_7;
-		if (act == 1) color_palette = palette_15;
-		if (act == 2) color_palette = palette_17;
-		if (act == 3) color_palette = palette_85;
-		if (act == 4) color_palette = palette_92;
-		if (act == 5) color_palette = palette_Grayscale;
-		if (act == 6) color_palette = palette_Grey;
-		if (act == 7) color_palette = palette_Iron2;
-		if (act == 8) color_palette = palette_Iron_Black;
-		if (act == 9) color_palette = palette_Rainbow;
+		if (act == 0) tdata.color_palette = palette_7;
+		if (act == 1) tdata.color_palette = palette_15;
+		if (act == 2) tdata.color_palette = palette_17;
+		if (act == 3) tdata.color_palette = palette_85;
+		if (act == 4) tdata.color_palette = palette_92;
+		if (act == 5) tdata.color_palette = palette_Grayscale;
+		if (act == 6) tdata.color_palette = palette_Grey;
+		if (act == 7) tdata.color_palette = palette_Iron2;
+		if (act == 8) tdata.color_palette = palette_Iron_Black;
+		if (act == 9) tdata.color_palette = palette_Rainbow;
 		colorpalette=act;
 	};
 }
@@ -410,13 +440,13 @@ int act;
 void
 emissivity_changed (GtkRange *range, gpointer user_data)
 {
-	emissivity=gtk_range_get_value (range);
+	tdata.emissivity=gtk_range_get_value (range);
 }
 
 void
 tempreflected_changed (GtkSpinButton *spin_button, gpointer user_data)
 {
-	tempreflected=gtk_spin_button_get_value (spin_button);
+	tdata.tempreflected=gtk_spin_button_get_value (spin_button);
 }
 
 void
@@ -472,7 +502,7 @@ GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DI
 	gtk_scale_add_mark (GTK_SCALE(w), 0.60, GTK_POS_BOTTOM, "half shiny");
 	gtk_scale_add_mark (GTK_SCALE(w), 0.80, GTK_POS_TOP, "half matte");
 	gtk_scale_add_mark (GTK_SCALE(w), 0.90, GTK_POS_BOTTOM, "matte");
-	gtk_range_set_value(GTK_RANGE(w), emissivity);
+	gtk_range_set_value(GTK_RANGE(w), tdata.emissivity);
 	gtk_container_add (GTK_CONTAINER (vb), w);
 	g_signal_connect (w, "value-changed",
 		G_CALLBACK (emissivity_changed), NULL);
@@ -481,7 +511,7 @@ GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DI
 	gtk_container_add (GTK_CONTAINER (vb), w);
 
 	w=gtk_spin_button_new_with_range(-100.0, +100.0, 0.5);
-	gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), tempreflected);
+	gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), tdata.tempreflected);
 	gtk_container_add (GTK_CONTAINER (vb), w);
 	g_signal_connect (w, "value-changed",
 		G_CALLBACK (tempreflected_changed), NULL);
@@ -508,6 +538,18 @@ void
 show_crosshair_toggled (GtkToggleButton *togglebutton, gpointer user_data)
 {
 	show_crosshair=gtk_toggle_button_get_active(togglebutton);
+}
+
+void
+shot_visual_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+{
+	shot_store_visual=gtk_toggle_button_get_active(togglebutton);
+}
+
+void
+shot_ir_raw_toggled (GtkToggleButton *togglebutton, gpointer user_data)
+{
+	shot_store_ir_raw=gtk_toggle_button_get_active(togglebutton);
 }
 
 void
@@ -549,6 +591,18 @@ GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DI
 	gtk_container_add (GTK_CONTAINER (vb), w);
 	g_signal_connect (w, "toggled",
 		G_CALLBACK (show_palette_toggled), NULL);
+	
+	w=gtk_check_button_new_with_label ("Shot store visual image");
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w), shot_store_visual);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "toggled",
+		G_CALLBACK (shot_visual_toggled), NULL);
+	
+	w=gtk_check_button_new_with_label ("Shot store raw IR image");
+	gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(w), shot_store_ir_raw);
+	gtk_container_add (GTK_CONTAINER (vb), w);
+	g_signal_connect (w, "toggled",
+		G_CALLBACK (shot_ir_raw_toggled), NULL);
 	
 	gtk_widget_show_all(c);
 	gtk_dialog_run(GTK_DIALOG(dialog));
@@ -630,7 +684,7 @@ GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DI
 	w=gtk_label_new("X Offset");
 	gtk_container_add (GTK_CONTAINER (vb), w);
 
-	w=gtk_spin_button_new_with_range(-100.0, +100.0, 1.);
+	w=gtk_spin_button_new_with_range(-200.0, +200.0, 1.);
 	gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), vis_x_offset);
 	gtk_container_add (GTK_CONTAINER (vb), w);
 	g_signal_connect (w, "value-changed",
@@ -639,7 +693,7 @@ GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DI
 	w=gtk_label_new("Y Offset");
 	gtk_container_add (GTK_CONTAINER (vb), w);
 
-	w=gtk_spin_button_new_with_range(-100.0, +100.0, 1.);
+	w=gtk_spin_button_new_with_range(-200.0, +200.0, 1.);
 	gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), vis_y_offset);
 	gtk_container_add (GTK_CONTAINER (vb), w);
 	g_signal_connect (w, "value-changed",
@@ -654,10 +708,7 @@ GtkDialogFlags flags = GTK_DIALOG_USE_HEADER_BAR /*| GTK_DIALOG_MODAL*/ | GTK_DI
 
 
 void
-quit_activate
-(GSimpleAction *simple,
-                       GVariant      *parameter,
-                       gpointer       user_data)
+quit_activate (GSimpleAction *simple, GVariant *parameter, gpointer user_data)
 {
 	close_window ();
 }
@@ -680,7 +731,7 @@ const GActionEntry entries[] = {
   };
 
 	// init default color palette
-	color_palette = palette_Rainbow;
+	tdata.color_palette = palette_Rainbow;
 
 //		gappw=gtk_application_window_new(gapp);
 //	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
@@ -787,16 +838,19 @@ GtkWidget *widget;
 int
 main (int argc, char **argv)
 {
+	tdata.ir_buffer = (unsigned char *)malloc(640*480*4);
+	tdata.raw_ir_buffer = (unsigned short *)malloc(169*120*2);
+	tdata.emissivity=0.9;
+	tdata.tempreflected=20.0;
+	tdata.t_min=0.0;
+	tdata.t_max=0.0;
+	tdata.t_center=0.0;
+	tdata.flir_run=FALSE;
+
 	gapp=gtk_application_new("org.gnome.flirgtk", G_APPLICATION_FLAGS_NONE);
-	// gtk_init(&argc, &argv);
-
-	//create_main_window();
 	g_signal_connect(gapp, "activate", G_CALLBACK (flirgtk_app_activate), NULL);
-
 	g_application_run (G_APPLICATION (gapp), argc, argv);
     g_object_unref (gapp);
-
-//	gtk_main();
 
 return 0;
 }

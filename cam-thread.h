@@ -28,4 +28,19 @@ struct battery_state_t {
 	double chargingCurrent;
 };
 
+
+struct t_data_t {
+	unsigned short *raw_ir_buffer;
+	unsigned char *jpeg_buffer;
+	unsigned int jpeg_size;
+	unsigned char *ir_buffer;
+	double emissivity;
+	double tempreflected;
+	double t_min, t_max, t_center;
+	struct shutter_state_t shutter_state;
+	struct battery_state_t battery_state;
+	gboolean flir_run;
+	unsigned char *color_palette;
+};
+
 #endif

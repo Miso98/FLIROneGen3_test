@@ -22,10 +22,6 @@
 
 // from main thread
 void update_fb(void);
-//extern unsigned char *fbdata;
-extern gboolean flir_run;
-extern unsigned char *color_palette;
-
 
 
 #include <unistd.h>
@@ -53,31 +49,18 @@ extern unsigned char *color_palette;
 #define PRODUCT_ID 0x1996
 
 static struct libusb_device_handle *devh = NULL;
-//int filecount=0;
-struct timeval t1, t2;
-long long fps_t;
 
-double t_min = 0.0;
-double t_max = 0.0;
-double t_center = 0.0;
-
-
-int FFC =   0; // detect FFC
+static int FFC =   0; // detect FFC
 
 // -- buffer for EP 0x85 chunks ---------------
 #define BUF85SIZE 1048576  // size got from android app
-int buf85pointer = 0;
-unsigned char buf85[BUF85SIZE];
-
-extern unsigned char *jpeg_buffer;
-extern unsigned int jpeg_size;
-extern unsigned char *ir_buffer;
-extern double emissivity;
-extern double tempreflected;
+static int buf85pointer = 0;
+static unsigned char buf85[BUF85SIZE];
+static unsigned char fb_proc[160*120]; //, fb_proc2[160*120*3];
 
 
-struct shutter_state_t shutter_state;
-struct battery_state_t battery_state;
+
+static struct t_data_t *tdata;
 
 // EP81 device status message (JSON)
 // {
@@ -115,33 +98,33 @@ parse_status(unsigned char *buf)
 	res = cJSON_GetObjectItemCaseSensitive(status_json, "shutterState");
 	if (cJSON_IsString(res) && (res->valuestring != NULL)) {
 		if (strncmp(res->valuestring,"FFC",3)==0) {
-			shutter_state.shutterState=sFFC;
+			tdata->shutter_state.shutterState=sFFC;
 		} else if (strncmp(res->valuestring,"ON",2)==0) {
-			shutter_state.shutterState=sON;
+			tdata->shutter_state.shutterState=sON;
 		} else {
-			shutter_state.shutterState=sUNKNOWN;
+			tdata->shutter_state.shutterState=sUNKNOWN;
 		}
 	}
 	res = cJSON_GetObjectItemCaseSensitive(status_json, "shutterTemperature");
 	if (cJSON_IsNumber(res)) {
-		shutter_state.shutterTemperature=res->valuedouble;
+		tdata->shutter_state.shutterTemperature=res->valuedouble;
 	}
 	res = cJSON_GetObjectItemCaseSensitive(status_json, "usbNotifiedTimestamp");
 	if (cJSON_IsNumber(res)) {
-		shutter_state.usbNotifiedTimestamp=res->valuedouble;
+		tdata->shutter_state.usbNotifiedTimestamp=res->valuedouble;
 	}
 	res = cJSON_GetObjectItemCaseSensitive(status_json, "usbEnqueuedTimestamp");
 	if (cJSON_IsNumber(res)) {
-		shutter_state.usbEnqueuedTimestamp=res->valuedouble;
+		tdata->shutter_state.usbEnqueuedTimestamp=res->valuedouble;
 	}
 	res = cJSON_GetObjectItemCaseSensitive(status_json, "ffcState");
 	if (cJSON_IsString(res) && (res->valuestring != NULL)) {
 		if (strncmp(res->valuestring,"FFC_VALID_RAD",13)==0) {
-			shutter_state.ffcState=FFC_VALID_RAD;
+			tdata->shutter_state.ffcState=FFC_VALID_RAD;
 		} else if (strncmp(res->valuestring,"FFC_PROGRESS",12)==0) {
-			shutter_state.ffcState=FFC_PROGRESS;
+			tdata->shutter_state.ffcState=FFC_PROGRESS;
 		} else {
-			shutter_state.ffcState=FFC_UNKNOWN;
+			tdata->shutter_state.ffcState=FFC_UNKNOWN;
 		}
 	}
 
@@ -168,19 +151,19 @@ parse_config_in(unsigned char *buf)
 		if (strncmp(res->valuestring,"batteryVoltageUpdate",20)==0) {
 			res3 = cJSON_GetObjectItemCaseSensitive(res2, "voltage");
 			if (cJSON_IsNumber(res3)) {
-				battery_state.voltage = res3->valuedouble;
+				tdata->battery_state.voltage = res3->valuedouble;
 				// printf("bat %.2fV\n", res3->valuedouble);
 			}
 			res3 = cJSON_GetObjectItemCaseSensitive(res2, "percentage");
 			if (cJSON_IsNumber(res3)) {
-				battery_state.percentage = res3->valueint;
+				tdata->battery_state.percentage = res3->valueint;
 				// printf("bat %f%%\n", res3->valuedouble);
 			}
 		}
 		if (strncmp(res->valuestring,"batteryChargingCurrentUpdate",28)==0) {
 			res3 = cJSON_GetObjectItemCaseSensitive(res2, "chargingCurrent");
 			if (cJSON_IsNumber(res3)) {
-				battery_state.chargingCurrent = res3->valuedouble;
+				tdata->battery_state.chargingCurrent = res3->valuedouble;
 				// printf("bat %.2fV\n", res3->valuedouble);
 			}
 		}
@@ -202,9 +185,9 @@ raw2temperature(unsigned short RAW)
 	// mystery correction factor
 	RAW *=4;
 	// calc amount of radiance of reflected objects ( Emissivity < 1 )
-	double RAWrefl=PlanckR1/(PlanckR2*(exp(PlanckB/(tempreflected/*TempReflected*/+273.15))-PlanckF))-PlanckO;
+	double RAWrefl=PlanckR1/(PlanckR2*(exp(PlanckB/(tdata->tempreflected/*TempReflected*/+273.15))-PlanckF))-PlanckO;
 	// get displayed object temp max/min
-	double RAWobj=(RAW-(1-emissivity/*Emissivity*/)*RAWrefl)/emissivity/*Emissivity*/;
+	double RAWobj=(RAW-(1-tdata->emissivity/*Emissivity*/)*RAWrefl)/tdata->emissivity/*Emissivity*/;
 	// calc object temperature
 
 	return PlanckB/log(PlanckR1/(PlanckR2*(RAWobj+PlanckO))+PlanckF)-273.15;  
@@ -261,20 +244,17 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 		parse_status(&buf85[28+ThermalSize+JpgSize]);
 	}
 
-	int i,v;
+	int v;
 	// get a full frame, first print the status
-	t1=t2;
-	gettimeofday(&t2, NULL);
 	buf85pointer=0;
   
-	unsigned short pix[160*120];   // original Flir 16 Bit RAW
+	unsigned short *pix=tdata->raw_ir_buffer;   // original Flir 16 Bit RAW
 	int x, y;
-	unsigned char *fb_proc,*fb_proc2; 
 
-	fb_proc = malloc(160 * 128); // 8 Bit gray buffer really needs only 160 x 120
-	memset(fb_proc, 128, 160*128);       // sizeof(fb_proc) doesn't work, value depends from LUT
+	// fb_proc = malloc(160 * 128); // 8 Bit gray buffer really needs only 160 x 120
+	memset(fb_proc, 128, 160*120);       // sizeof(fb_proc) doesn't work, value depends from LUT
   
-	fb_proc2 = malloc(160 * 128 * 3); // 8x8x8  Bit RGB buffer 
+	//fb_proc2 = malloc(160 * 128 * 3); // 8x8x8  Bit RGB buffer 
 
 	int min = 0x10000, max = 0;
 	float rms = 0;
@@ -321,33 +301,33 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	// calc medium of 2x2 center pixels
 	int med = (pix[59 * 160 + 79]+pix[59 * 160 + 80]+pix[60 * 160 + 79]+pix[60 * 160 + 80])/4;
 
-	t_min = raw2temperature(min);
-	t_max = raw2temperature(max);
-	t_center = raw2temperature(med);
+	tdata->t_min = raw2temperature(min);
+	tdata->t_max = raw2temperature(max);
+	tdata->t_center = raw2temperature(med);
 
-	if (ir_buffer == NULL) {
-		ir_buffer = (unsigned char *)malloc(640*480*4);
+	if (tdata->ir_buffer == NULL) {
+		tdata->ir_buffer = (unsigned char *)malloc(640*480*4);
 		fprintf(stderr, "nb\n");
 	}
 	for (y = 0; y < 120; ++y) {
 		for (x = 0; x < 160; ++x) {
 			// fb_proc is the gray scale frame buffer
 			v=fb_proc[y * 160 + x] ;   // unsigned char!!
-			ir_buffer[4*y * 160 + x*4] = 
-				color_palette[3 * v + 2];  // B
-			ir_buffer[(4*y * 160 + x*4)+1] = 
-				color_palette[3 * v + 1]; // G
-			ir_buffer[(4*y * 160 + x*4)+2] = 
-				color_palette[3 * v]; // R
+			tdata->ir_buffer[4*y * 160 + x*4] = 
+				tdata->color_palette[3 * v + 2];  // B
+			tdata->ir_buffer[(4*y * 160 + x*4)+1] = 
+				tdata->color_palette[3 * v + 1]; // G
+			tdata->ir_buffer[(4*y * 160 + x*4)+2] = 
+				tdata->color_palette[3 * v]; // R
 //			ir_buffer[(4*y * 160 + x*4)+3] = 
 //				0x00; // A, empty
 		}
 	}
     
-	if (jpeg_size == 0 && JpgSize > 0) {
-		jpeg_size=JpgSize;
-		jpeg_buffer=(unsigned char *)malloc(jpeg_size);
-		memcpy(jpeg_buffer, &buf85[28+ThermalSize], jpeg_size);
+	if (tdata->jpeg_size == 0 && JpgSize > 0) {
+		tdata->jpeg_size=JpgSize;
+		tdata->jpeg_buffer=(unsigned char *)malloc(tdata->jpeg_size);
+		memcpy(tdata->jpeg_buffer, &buf85[28+ThermalSize], tdata->jpeg_size);
 	}
  
 	if (strncmp ((char *)&buf85[28+ThermalSize+JpgSize+17],"FFC",3)==0) {
@@ -361,8 +341,8 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 		}
 	}
 	// free memory
-	free(fb_proc);                    // thermal RAW
-	free(fb_proc2);                   // visible jpg
+	//free(fb_proc);                    // thermal RAW
+	//free(fb_proc2);                   // visible jpg
 }
 
 static int
@@ -476,7 +456,7 @@ int r = 1;
 	int state = 1; 
 	// int ct=0;
 
-	while (flir_run) {
+	while (tdata->flir_run) {
 		switch(state) {
 		         case 1:
 				/* Flir config
@@ -615,7 +595,6 @@ int r = 1;
 		// poll Endpoints 0x81, 0x83
 		r = libusb_bulk_transfer(devh, 0x81, buf, sizeof(buf), &actual_length, 10);
 		if (actual_length > 16) {
-			int i;
 			unsigned int magic, second, len;
 
 			magic=*(unsigned int *)&buf[0];
@@ -627,6 +606,7 @@ int r = 1;
 				parse_config_in(&buf[16]);
 			}
 #if 0
+			int i;
 			for (i=0; i<actual_length; i++) {
 				if (buf[i] > 31 && buf[i]<128)
 					fprintf(stderr, "%c", buf[i]);
@@ -702,6 +682,7 @@ int r = 1;
 
 gpointer cam_thread_main(gpointer user_data)
 {
+	tdata=(struct t_data_t *)user_data;
 	EPloop(NULL);
 
 	return NULL;

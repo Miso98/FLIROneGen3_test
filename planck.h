@@ -19,7 +19,7 @@
 #define  PlanckR2  0.0125
 
 // Reflected Apparent Temperature [°C]
-#define  TempReflected 20.0
+#define  TempReflected 22.0
 
 // 0.01 to 0.99 on the emissivity scale.
 // Highly polished metallic surfaces such as copper or aluminum usually have an emissivity below 0.10.
