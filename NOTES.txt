@@ -1,3 +1,17 @@
+
+[Desktop Entry]
+Type=Application
+Name=Example
+Icon=exampleapp
+StartupNotify=true
+Exec=@bindir@/exampleapp
+
+
+Scaling 0.5
+xoffst -71
+yoffset -40
+
+
 cairo_surface_t *cairo_get_target (cairo_t *cr);
 
 int stride;

@@ -14,6 +14,8 @@ $(PRG): $(OBJ) cam-thread.h planck.h
 
 install:
 	install -D $(PRG) $(DESTDIR)$(prefix)/bin/$(PRG)
+	install -D flirgtk.desktop $(DESTDIR)$(prefix)/share/applications/flirgtk.desktop
+	install -D flirgtk.png $(DESTDIR)$(prefix)/share/icons/hicolor/256x256/apps/flirgtk.png
 	install -D 77-flirone-lusb.rules $(DESTDIR)/lib/udev/rules.d/77-flirone-lusb.rules
 
 clean:
@@ -26,4 +28,4 @@ clean:
 	rm -f debian/flirgtk.substvars
 
 deb:
-	dpkg-buildpackage -rfakeroot -b -uc -us -ui -i -i
+	dpkg-buildpackage -rfakeroot -b -uc -us -ui -i

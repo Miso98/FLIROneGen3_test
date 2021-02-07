@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=FlirGTK
+GenericName=FlirGTK
+Comment=Live view and picture taking with FLIR ONE USB IR camera
+Comment[de]=Live view and picture taking with FLIR ONE USB IR camera
+Icon=flirgtk
+StartupNotify=true
+Terminal=false
+Exec=flirgtk
+Categories=GTK;GNOME;Utility;
+Keywords=flir;

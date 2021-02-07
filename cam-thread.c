@@ -44,7 +44,7 @@ extern unsigned char *color_palette;
 #include <math.h>
 
 #include "cam-thread.h"
-#include "plank.h"
+#include "planck.h"
 
 
 // -----------------START-ORG-CODE------------------------------------------
@@ -252,8 +252,6 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	uint32_t JpgSize     = buf85[16] + (buf85[17] << 8) + (buf85[18] << 16) + (buf85[19] << 24);
 	uint32_t StatusSize  = buf85[20] + (buf85[21] << 8) + (buf85[22] << 16) + (buf85[23] << 24);
 
-	//printf("FrameSize= %d (+28=%d), ThermalSize %d, JPG %d, StatusSize %d, Pointer %d\n",FrameSize,FrameSize+28, ThermalSize, JpgSize,StatusSize,buf85pointer); 
-
 	if ( (FrameSize+28) > (buf85pointer) )  {
 		// wait for next chunk
 		return;
@@ -267,22 +265,6 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	// get a full frame, first print the status
 	t1=t2;
 	gettimeofday(&t2, NULL);
-	// fps as moving average over last 20 frames
-	//  fps_t = (19*fps_t+10000000/(((t2.tv_sec * 1000000) + t2.tv_usec) - ((t1.tv_sec * 1000000) + t1.tv_usec)))/20;
-
-	//filecount++;
-	//  printf("#%08i %lld/10 fps:",filecount,fps_t); 
-#if 0
-	  for (i = 0; i <  StatusSize; i++) {
-	                    v=28+ThermalSize+JpgSize+i;
-	                    if (buf85[v]>31) {
-	                    	printf("%c", buf85[v]);
-	                    } else {
-	                    	printf("<%02x>", buf85[v]);
-						}
-	            }
-	  printf("\n"); 
-#endif
 	buf85pointer=0;
   
 	unsigned short pix[160*120];   // original Flir 16 Bit RAW
@@ -336,46 +318,12 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 		}
 	}
   
-	//char st1[100];
-	//char st2[100];
-	//struct tm *loctime;
-	// Convert it to local time and Print it out in a nice format.
-	//loctime = localtime (&now1);
-	//strftime (st1, 60, "%H:%M:%S", loctime);
-
 	// calc medium of 2x2 center pixels
 	int med = (pix[59 * 160 + 79]+pix[59 * 160 + 80]+pix[60 * 160 + 79]+pix[60 * 160 + 80])/4;
 
 	t_min = raw2temperature(min);
 	t_max = raw2temperature(max);
 	t_center = raw2temperature(med);
-	// sprintf(st2," %.1f/%.1f/%.1f'C", raw2temperature(min), raw2temperature(med), raw2temperature(max));
-	//strcat(st1, st2);
-
-	//#define MAXC 26 // max chars in line  160/6=26,6 
-	//strncpy(st2, st1, MAXC);
-	// write zero to string !! 
-	//st2[MAXC-1] = '\0';
-	//fprintf(stderr,"%s\r",st2);
-	// font_write(fb_proc, 1, 120, st2);
-
-	// show crosshairs, remove if required 
-	// font_write(fb_proc, 80-2, 60-3, "+");
-
-	//maxx -= 4;
-	//maxy -= 4;
-
-	//if (maxx < 0)
-	//	maxx = 0; 
-	//if (maxy < 0)
-	//	maxy = 0;
-	//if (maxx > 150)
-	//	maxx = 150;
-	//if (maxy > 110)
-	//	maxy = 110;
-
-	// font_write(fb_proc, 160-6, maxy, "<");
-	// font_write(fb_proc, maxx, 120-8, "|");
 
 	if (ir_buffer == NULL) {
 		ir_buffer = (unsigned char *)malloc(640*480*4);
@@ -383,93 +331,19 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	}
 	for (y = 0; y < 120; ++y) {
 		for (x = 0; x < 160; ++x) {
-			// unsigned int *p1, *pc;
 			// fb_proc is the gray scale frame buffer
 			v=fb_proc[y * 160 + x] ;   // unsigned char!!
-#if 0
-			// fb_proc2 is an 24bit RGB buffer
-			fb_proc2[3*y * 160 + x*3] = colormap[3 * v];   // unsigned char!!
-			fb_proc2[(3*y * 160 + x*3)+1] = colormap[3 * v + 1];   // unsigned char!!
-			fb_proc2[(3*y * 160 + x*3)+2] = colormap[3 * v + 2];   // unsigned char!!
-#else
-			//fbdata[4*y * 640 + x*4] = colormap[3 * v + 2];  // B
-			//fbdata[(4*y * 640 + x*4)+1] = colormap[3 * v + 1]; // G
-			//fbdata[(4*y * 640 + x*4)+2] = colormap[3 * v]; // R
-			//fbdata[(4*y * 640 + x*4)+3] = 0x00; // empty
-
-//			fprintf(stderr, "%d %d %d %d\n",x ,y, (4*y * 160 + x*4), v);
-				ir_buffer[4*y * 160 + x*4] = 
-					color_palette[3 * v + 2];  // B
-				ir_buffer[(4*y * 160 + x*4)+1] = 
-					color_palette[3 * v + 1]; // G
-				ir_buffer[(4*y * 160 + x*4)+2] = 
-					color_palette[3 * v]; // R
-//				ir_buffer[(4*y * 160 + x*4)+3] = 
-//					0x00; // A, empty
-#if 0
-			// assemble one 32 bit pixel
-			fbdata[16*y * 640 + x*16] = color_palette[3 * v + 2];  // B
-			fbdata[(16*y * 640 + x*16)+1] = color_palette[3 * v + 1]; // G
-			fbdata[(16*y * 640 + x*16)+2] = color_palette[3 * v]; // R
-			// fbdata[(16*y * 640 + x*16)+3] = 0x00; // empty
-
-			// copy whole 32bit words hor/vert
-			p1 = (unsigned int *)&fbdata[16*y * 640 + x*16];
-			// quadruple horizontally
-			pc = (unsigned int *)&fbdata[(16*y * 640 + x*16)+4];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(16*y * 640 + x*16)+8];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(16*y * 640 + x*16)+12];
-			*pc = *p1;
-
-			// quadruple vertically+1
-			pc = (unsigned int *)&fbdata[(4*((y*4)+1) * 640 + x*16)];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+1) * 640 + x*16)+4];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+1) * 640 + x*16)+8];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+1) * 640 + x*16)+12];
-			*pc = *p1;
-
-			pc = (unsigned int *)&fbdata[(4*((y*4)+2) * 640 + x*16)];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+2) * 640 + x*16)+4];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+2) * 640 + x*16)+8];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+2) * 640 + x*16)+12];
-			*pc = *p1;
-
-			pc = (unsigned int *)&fbdata[(4*((y*4)+3) * 640 + x*16)];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+3) * 640 + x*16)+4];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+3) * 640 + x*16)+8];
-			*pc = *p1;
-			pc = (unsigned int *)&fbdata[(4*((y*4)+3) * 640 + x*16)+12];
-			*pc = *p1;
-#endif
-#endif
+			ir_buffer[4*y * 160 + x*4] = 
+				color_palette[3 * v + 2];  // B
+			ir_buffer[(4*y * 160 + x*4)+1] = 
+				color_palette[3 * v + 1]; // G
+			ir_buffer[(4*y * 160 + x*4)+2] = 
+				color_palette[3 * v]; // R
+//			ir_buffer[(4*y * 160 + x*4)+3] = 
+//				0x00; // A, empty
 		}
 	}
     
-	// write video to v4l2loopback(s)
-	//   write(fdwr0, fb_proc, framesize0);  // gray scale Thermal Image
-	//write(fdwr1, &buf85[28+ThermalSize], JpgSize);  // jpg Visual Image
-#if 0
-	fprintf(stderr, "jpgsize %d\n", JpgSize);
-	{
-		char fname[64];
-		int fdf;
-		
-		snprintf(fname, 64, "frame-%04d.jpg", fcnt++);
-		fdf=open(fname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-		write (fdf, &buf85[28+ThermalSize], JpgSize);
-		close(fdf);
-	}
-#endif
 	if (jpeg_size == 0 && JpgSize > 0) {
 		jpeg_size=JpgSize;
 		jpeg_buffer=(unsigned char *)malloc(jpeg_size);
@@ -486,7 +360,6 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 			update_fb();
 		}
 	}
-
 	// free memory
 	free(fb_proc);                    // thermal RAW
 	free(fb_proc2);                   // visible jpg
