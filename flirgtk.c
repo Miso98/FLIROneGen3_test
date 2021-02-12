@@ -198,10 +198,10 @@ int fd;
 	tmp=g_get_user_special_dir(G_USER_DIRECTORY_PICTURES);
 	if (tmp == NULL)
 		tmp = "./";
-	strncpy(pname, tmp, PATH_MAX-30-4); // leave room for filename+extension
-	strncat(pname, "/", PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
-	strncat(pname, fname, PATH_MAX-5); // -5 to leave space for trailing \0 byte + extension
-	strncat(pname, ".raw", PATH_MAX-1); // -5 to leave space for trailing \0 byte + extension
+	strncpy(pname, tmp, PATH_MAX-30-4);		// leave room for filename+extension
+	strncat(pname, "/", PATH_MAX-5);		// -5 to leave space for trailing \0 byte + extension
+	strncat(pname, fname, PATH_MAX-5);		// -5 to leave space for trailing \0 byte + extension
+	strncat(pname, ".data", PATH_MAX-1);	// -5 to leave space for trailing \0 byte + extension
 
 	fd=open(pname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (fd>=0) {
@@ -733,8 +733,6 @@ const GActionEntry entries[] = {
 	// init default color palette
 	tdata.color_palette = palette_Rainbow;
 
-//		gappw=gtk_application_window_new(gapp);
-//	window = gtk_window_new (GTK_WINDOW_TOPLEVEL);
 	window = appwindow;
 	gtk_window_set_title (GTK_WINDOW (window), "FLIR One");
 	w=gtk_header_bar_new();
@@ -820,8 +818,6 @@ const GActionEntry entries[] = {
 		G_CALLBACK (store_shot_clicked), NULL);
 
 	gtk_widget_show_all(window);
-
-	// return window;
 }
 
 
