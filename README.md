@@ -32,3 +32,16 @@ For access rights of the application to the USB device:
 
     cp 77-flirone-lusb.rules /lib/udev/rules.d/
     udevadm control --reload-rules
+
+## Maintenance
+
+Just recently (July 2023) I got myself another IR camera and will not use my FLIR
+One Pro anymore. I also can not afford to keep both. I could just for
+hacking fun continue to work on this project but then I would need some
+funding to recoup not selling the FLIR One.
+
+So if you have an interest in keeping this FLIR-GTK project going, I'd be
+happy for a donation, you can use my PayPal:
+https://paypal.me/NFaerber42
+
+Thank you!
