@@ -843,7 +843,7 @@ main (int argc, char **argv)
 	tdata.t_center=0.0;
 	tdata.flir_run=FALSE;
 
-	gapp=gtk_application_new("org.gnome.flirgtk", G_APPLICATION_FLAGS_NONE);
+	gapp=gtk_application_new("org.gnome.flirgtk", G_APPLICATION_DEFAULT_FLAGS);
 	g_signal_connect(gapp, "activate", G_CALLBACK (flirgtk_app_activate), NULL);
 	g_application_run (G_APPLICATION (gapp), argc, argv);
     g_object_unref (gapp);
