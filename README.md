@@ -7,7 +7,7 @@ GTK+ application for FLIR ONE USB thermal camera based on flir-v4l:
 
 Update 2024 Mitchell (Miso98):
 
-This code is adapted from the flirgtk repo developed by this person here https://source.dpin.de/nica/flir-gtk/-/blob/master/flirgtk.c The above repo is a cleaned and updated version of https://github.com/fnoop/flirone-v4l2 but now includes a very helpful GUI This code is meant to allow for the use of a FLIR One camera (which is connected via USB-C and only on Android OS) with a Linux Machine. However, I have modified it for the resolution of the FLIR One Gen 3 for android (80x60) and includes a hard scaling factor for noise attenuation to create less blue or red shifted images
+This code is adapted from the flirgtk repo developed by this person here https://source.dpin.de/nica/flir-gtk/-/blob/master/flirgtk.c The above repo is a cleaned and updated version of https://github.com/fnoop/flirone-v4l2 but now includes a very helpful GUI This code is meant to allow for the use of a FLIR One camera (which is connected via USB-C and only on Android OS) with a Linux Machine. However, I have modified it for the resolution of the FLIR One Gen 3 for android (80x60) and includes a hard scaling factor for noise attenuation to create fewer blue or red shifted images
 
 The original author and contributor has since stopped updating the FLIR-GTK project as they have begun using a new camera but has since left the following message:
 Just recently (July 2023) I got myself another IR camera and will not use my FLIR
