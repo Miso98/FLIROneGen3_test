@@ -1,4 +1,4 @@
-# FLIR-GTK
+# FLIR-GTK (Adjusted for Older Generation Cameras)
 
 GTK+ application for FLIR ONE USB thermal camera based on flir-v4l:
 >  Copyright (C) 2015-2016 Thomas <tomas123 @ EEVblog Electronics Community Forum>
