@@ -56,9 +56,21 @@ static int FFC =   0; // detect FFC
 #define BUF85SIZE 1048576  // size got from android app
 static int buf85pointer = 0;
 static unsigned char buf85[BUF85SIZE];
-static unsigned char fb_proc[160*120]; //, fb_proc2[160*120*3];
+
+//static int frameLen = 80;
+//static int frameWid = 60;
 
 
+static unsigned char fb_proc[80*60]; //, fb_proc2[160*120*3];
+//static unsigned char fb_proc[160*120]; 
+
+#define FRAME_WIDTH 80 // pixel heigth and width adjusted for gen 3 FLIR one
+#define FRAME_HEIGHT 60 // 
+#define BUFFER_PAD 82 // assuming 2-pixel padding for buffer
+
+int frameWid = FRAME_WIDTH;
+int frameLen = FRAME_HEIGHT;
+int bufferPad = BUFFER_PAD;
 
 static struct t_data_t *tdata;
 
@@ -178,19 +190,42 @@ parse_config_in(unsigned char *buf)
 	cJSON_Delete(config_json);
 }
 
+double temperature2raw(double temperature)
+{
+    // Convert temperature to raw sensor value
+    double RAWobj = (PlanckR1 / (PlanckR2 * (exp(PlanckB / (temperature + 273.15)) - PlanckF)) - PlanckO) * tdata->emissivity + (1 - tdata->emissivity) * 
+        (PlanckR1 / (PlanckR2 * (exp(PlanckB / (tdata->tempreflected + 273.15)) - PlanckF)) - PlanckO);
+    double RAW = RAWobj * tdata->emissivity / 4; // Reverse the correction factor
+
+    // Return the raw value
+    return RAW;
+}
 
 double
 raw2temperature(unsigned short RAW)
 {
-	// mystery correction factor
+	// mystery correction factor //?????
 	RAW *=4;
+
+	//  // Debug print to check RAW value
+	// fprintf(stderr, "RAW value: %u\n", RAW);
 	// calc amount of radiance of reflected objects ( Emissivity < 1 )
 	double RAWrefl=PlanckR1/(PlanckR2*(exp(PlanckB/(tdata->tempreflected/*TempReflected*/+273.15))-PlanckF))-PlanckO;
+
+    // fprintf(stderr, "RAWrefl: %f\n", RAWrefl);
+	
 	// get displayed object temp max/min
 	double RAWobj=(RAW-(1-tdata->emissivity/*Emissivity*/)*RAWrefl)/tdata->emissivity/*Emissivity*/;
-	// calc object temperature
 
-	return PlanckB/log(PlanckR1/(PlanckR2*(RAWobj+PlanckO))+PlanckF)-273.15;  
+    double temperature = PlanckB / log(PlanckR1 / (PlanckR2 * (RAWobj + PlanckO)) + PlanckF) - 273.15;
+
+	 // Check for NaN, very negative, or invalid temperatures
+    if (isnan(temperature) || temperature < -10.0) {
+        temperature = 0.0;  // Set temperature to 0°C for invalid readings
+    }
+
+
+	return temperature;  
 }
 
 
@@ -243,6 +278,7 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	if (StatusSize > 10) {
 		parse_status(&buf85[28+ThermalSize+JpgSize]);
 	}
+	
 
 	int v;
 	// get a full frame, first print the status
@@ -252,23 +288,25 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 	int x, y;
 
 	// fb_proc = malloc(160 * 128); // 8 Bit gray buffer really needs only 160 x 120
-	memset(fb_proc, 128, 160*120);       // sizeof(fb_proc) doesn't work, value depends from LUT
+	memset(fb_proc, 128, frameWid*frameLen);       // sizeof(fb_proc) doesn't work, value depends from LUT
   
 	//fb_proc2 = malloc(160 * 128 * 3); // 8x8x8  Bit RGB buffer 
 
 	int min = 0x10000, max = 0;
 	float rms = 0;
 
+
+
 	// Make a unsigned short array from what comes from the thermal frame
 	// find the max, min and RMS (not used yet) values of the array
 	//int maxx, maxy;
-	for (y = 0; y < 120; ++y) {
-		for (x = 0; x < 160; ++x) {
-			if (x<80) 
-				v = buf85[2*(y * 164 + x) +32]+256*buf85[2*(y * 164 + x) +33];
+	for (y = 0; y < frameLen; ++y) {
+		for (x = 0; x < frameWid; ++x) {
+			if (x<frameWid / 2) 
+				v = buf85[2*(y * bufferPad + x) +32]+256*buf85[2*(y * bufferPad + x) +33];
 			else
-				v = buf85[2*(y * 164 + x) +32+4]+256*buf85[2*(y * 164 + x) +33+4];   
-			pix[y * 160 + x] = v;   // unsigned char!!
+				v = buf85[2*(y * bufferPad + x) +32+4]+256*buf85[2*(y * bufferPad + x) +33+4];   
+			pix[y * frameWid + x] = v;   // unsigned char!!
       
 			if (v < min)
 				min = v;
@@ -279,9 +317,24 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 		}
 	}
 
-	// RMS used later
-	//  rms /= 160 * 120;
-	//  rms = sqrtf(rms);
+
+	
+	//experimental segment on capping temperature 
+	// Convert raw min and max to temperatures
+    //double temp_min = raw2temperature(min);
+    double temp_max = raw2temperature(max);
+
+    // Cap the max temperature to 45°C
+    if (temp_max > 45.0) {
+        temp_max = 45.0;
+    }
+
+	// int capped_min_raw = temperature2raw(temp_min);
+	int capped_max_raw = temperature2raw(temp_max);
+	// Update the min and max for scaling
+    min = min; // unchanged
+    max = capped_max_raw; // use capped max
+
   
 	// scale the data in the array
 	int delta = max - min;
@@ -289,41 +342,74 @@ void vframe(char ep[],char EP_error[], int r, int actual_length, unsigned char b
 		delta = 1;   // if max = min we have divide by zero
 	int scale = 0x10000 / delta;
 
-	for (y = 0; y < 120; ++y) {   //120
-		for (x = 0; x < 160; ++x) {   //160
-			int v = (pix[y * 160 + x] - min) * scale >> 8;
+	for (y = 0; y < frameLen; ++y) {   //60
+		for (x = 0; x < frameWid; ++x) {   //80
+			int v = (pix[y * frameWid + x] - min) * scale >> 8;
+
+
+			// Clip the value to be within [0, 0xFF] added for crop scale
+            if (v < 0) v = 0;
+            if (v > 0xFF) v = 0xFF;
+		
 
 			// fb_proc is the gray scale frame buffer
-			fb_proc[y * 160 + x] = v;   // unsigned char!!
+			fb_proc[y * frameWid + x] = v;   // unsigned char!!
 		}
 	}
   
 	// calc medium of 2x2 center pixels
-	int med = (pix[59 * 160 + 79]+pix[59 * 160 + 80]+pix[60 * 160 + 79]+pix[60 * 160 + 80])/4;
+	int med = (pix[(frameLen/2 - 1) * frameWid + (frameWid /2 - 1)]+pix[(frameLen / 2 - 1) * frameWid + (frameWid/2)]+pix[(frameLen/2) * frameWid + (frameWid/2 - 1)]+pix[frameLen/2 * frameWid + (frameWid/2)])/4;
 
 	tdata->t_min = raw2temperature(min);
 	tdata->t_max = raw2temperature(max);
 	tdata->t_center = raw2temperature(med);
 
+	float min_temp = 20.0; //0 deg C min temp for hard scaling 
+	float max_temp = 40.0; //40C max temp for hard scaling 
+	float temp_value;
+	int color_index;
+
+
+
 	if (tdata->ir_buffer == NULL) {
 		tdata->ir_buffer = (unsigned char *)malloc(640*480*4);
 		fprintf(stderr, "nb\n");
 	}
-	for (y = 0; y < 120; ++y) {
-		for (x = 0; x < 160; ++x) {
-			// fb_proc is the gray scale frame buffer
-			v=fb_proc[y * 160 + x] ;   // unsigned char!!
-			tdata->ir_buffer[4*y * 160 + x*4] = 
-				tdata->color_palette[3 * v + 2];  // B
-			tdata->ir_buffer[(4*y * 160 + x*4)+1] = 
-				tdata->color_palette[3 * v + 1]; // G
-			tdata->ir_buffer[(4*y * 160 + x*4)+2] = 
-				tdata->color_palette[3 * v]; // R
-//			ir_buffer[(4*y * 160 + x*4)+3] = 
-//				0x00; // A, empty
-		}
-	}
+
+// 	for (y = 0; y < frameLen; ++y) {
+// 		for (x = 0; x < frameWid; ++x) {
+// 			// fb_proc is the gray scale frame buffer
+// 			v=fb_proc[y * frameWid + x] ;   // unsigned char!!
+// 			tdata->ir_buffer[4*y * frameWid + x*4] = 
+// 				tdata->color_palette[3 * v + 2];  // B
+// 			tdata->ir_buffer[(4*y * frameWid + x*4)+1] = 
+// 				tdata->color_palette[3 * v + 1]; // G
+// 			tdata->ir_buffer[(4*y * frameWid + x*4)+2] = 
+// 				tdata->color_palette[3 * v]; // R
+// //			ir_buffer[(4*y * 160 + x*4)+3] = 
+// //				0x00; // A, empty
+// 		}
+// 	}
     
+
+	for (y = 0; y < frameLen; ++y) {
+    	for (x = 0; x < frameWid; ++x) {
+        	temp_value = raw2temperature(pix[y * frameWid + x]);
+        	color_index = (int)((temp_value - min_temp) / (max_temp - min_temp) * 255);
+        	if (color_index < 0) color_index = 0;
+        	if (color_index > 255) color_index = 255;
+
+        	tdata->ir_buffer[4*y * frameWid + x*4] = 
+            	tdata->color_palette[3 * color_index + 2];  // B
+        	tdata->ir_buffer[(4*y * frameWid + x*4)+1] = 
+            	tdata->color_palette[3 * color_index + 1]; // G
+        	tdata->ir_buffer[(4*y * frameWid + x*4)+2] = 
+            	tdata->color_palette[3 * color_index]; // R
+    	}
+	}
+
+
+
 	if (tdata->jpeg_size == 0 && JpgSize > 0) {
 		tdata->jpeg_size=JpgSize;
 		tdata->jpeg_buffer=(unsigned char *)malloc(tdata->jpeg_size);

@@ -18,7 +18,6 @@
 
 
 #include <gtk/gtk.h>
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -26,9 +25,7 @@
 // #include <limits.h>
 
 #include "cam-thread.h"
-
 #include "cairo_jpg/src/cairo_jpg.h"
-
 #include "palettes/15.h"
 #include "palettes/17.h"
 #include "palettes/7.h"
@@ -39,7 +36,6 @@
 #include "palettes/Iron2.h"
 #include "palettes/Iron_Black.h"
 #include "palettes/Rainbow.h"
-
 
 // UI variables
 static GtkWidget *window = NULL;
@@ -77,8 +73,6 @@ gpointer cam_thread_main(gpointer user_data);
 // data structure shared with camera thread
 static struct t_data_t tdata;
 
-
-
 gboolean
 configure_event (GtkWidget *widget, GdkEventConfigure *event, gpointer data)
 {
@@ -102,6 +96,13 @@ cairo_t *cr;
 unsigned char *fbdata;
 char tdisp[16];
 
+
+const int IR_WIDTH = 80;
+const int IR_HEIGHT = 60;
+
+
+
+#define G_APPLICATION_DEFAULT_FLAGS 0
 #define P_XPOS 175
 #define P_YPOS 2
 #define P_HEIGHT 14
@@ -125,7 +126,8 @@ char tdisp[16];
 	}
 
 	// update palette scale temperature range
-	snprintf(tdisp, 16, "%.1f°C", tdata.t_min);
+	//snprintf(tdisp, 16, "%.1f°C", tdata.t_min);
+	snprintf(tdisp, 16, "%.1f°C", 0.0); //hard coded min
 	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
 	cairo_select_font_face (cr, "Sans",
 		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
@@ -133,7 +135,8 @@ char tdisp[16];
 	cairo_move_to (cr, 102, 16);
 	cairo_show_text (cr, tdisp);
 
-	snprintf(tdisp, 16, "%.1f°C", tdata.t_max);
+	//snprintf(tdisp, 16, "%.1f°C", tdata.t_max);
+	snprintf(tdisp, 16, "%.1f°C", 40.0); //hard coded max 
 	cairo_set_source_rgb (cr, 1.0, 1.0, 1.0);
 	cairo_select_font_face (cr, "Sans",
 		CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
@@ -205,7 +208,8 @@ int fd;
 
 	fd=open(pname, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
 	if (fd>=0) {
-		write (fd, (unsigned char *)tdata.raw_ir_buffer, 160*120*2);
+		//write (fd, (unsigned char *)tdata.raw_ir_buffer, 160*120*2);
+		write (fd, (unsigned char *)tdata.raw_ir_buffer, 80*60*2);
 		close(fd);
 	}
 }
@@ -231,11 +235,12 @@ cairo_t *cr;
 		if (ircam && tdata.ir_buffer!=NULL) {
 			ir_surface=cairo_image_surface_create_for_data (tdata.ir_buffer,
 	                                     CAIRO_FORMAT_RGB24,
-	                                     160,
-	                                     120,
-	                                     4*160);
+										 80,
+										 60,
+										 4*80);
 				cairo_save(cr);
-				cairo_scale (cr, 4.0, 4.0);
+				//cairo_scale (cr, 4.0, 4.0);
+				cairo_scale (cr, 8.0, 8.0);
 				cairo_set_source_surface (cr, ir_surface, 0, 0);
 				cairo_paint (cr);
 				cairo_restore(cr);
@@ -835,7 +840,7 @@ int
 main (int argc, char **argv)
 {
 	tdata.ir_buffer = (unsigned char *)malloc(640*480*4);
-	tdata.raw_ir_buffer = (unsigned short *)malloc(169*120*2);
+	tdata.raw_ir_buffer = (unsigned short *)malloc(80*60*2); //changed from 160x120
 	tdata.emissivity=0.9;
 	tdata.tempreflected=20.0;
 	tdata.t_min=0.0;
@@ -847,6 +852,7 @@ main (int argc, char **argv)
 	g_signal_connect(gapp, "activate", G_CALLBACK (flirgtk_app_activate), NULL);
 	g_application_run (G_APPLICATION (gapp), argc, argv);
     g_object_unref (gapp);
+
 
 return 0;
 }
